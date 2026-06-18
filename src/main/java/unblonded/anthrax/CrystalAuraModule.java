@@ -194,4 +194,17 @@ public class CrystalAuraModule {
         }
         return true;
     }
+
+    private volatile boolean enabled = true;
+    private volatile float smoothing = 0.25f;
+    private volatile int stepMs = 1;
+
+    public boolean isEnabled() { return enabled; }
+    public void toggle() { enabled = !enabled; }
+    public float getSmoothing() { return smoothing; }
+    public void setSmoothing(float v) { smoothing = v; }
+    public int getStepMs() { return stepMs; }
+    public void setStepMs(int v) { stepMs = Math.max(1, v); }
+    public int getTickDelay() { return tickDelay; }
+    public void setTickDelay(int v) { tickDelay = v; }
 }
