@@ -5,6 +5,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.minecraft.client.KeyMapping;
 import org.lwjgl.glfw.GLFW;
+import unblonded.anthrax.gui.AnthraxScreen;
 
 public class Anthrax implements ClientModInitializer {
     @Override

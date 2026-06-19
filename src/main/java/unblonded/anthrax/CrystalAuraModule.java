@@ -200,7 +200,7 @@ public class CrystalAuraModule {
     private volatile int stepMs = 1;
 
     public boolean isEnabled() { return enabled; }
-    public void toggle() { enabled = !enabled; }
+    public void setEnabled(boolean v) { enabled = v; }
     public float getSmoothing() { return smoothing; }
     public void setSmoothing(float v) { smoothing = v; }
     public int getStepMs() { return stepMs; }
