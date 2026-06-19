@@ -184,7 +184,7 @@ public class AnthraxGui {
         gfx.fill(cx + CHECKBOX_SIZE - 1, cy, cx + CHECKBOX_SIZE, cy + CHECKBOX_SIZE, 0xFF5555FF);
         if (value) gfx.fill(cx + 2, cy + 2, cx + CHECKBOX_SIZE - 2, cy + CHECKBOX_SIZE - 2, 0xFF5555FF);
 
-        gfx.textRenderer().accept(cx + CHECKBOX_SIZE + 5, cy, txt(label, 0xFFFFFF));
+        gfx.textRenderer().accept(cx + CHECKBOX_SIZE + 4, cy - 2, txt(label, 0xFFFFFF));
         //gfx.textRenderer().accept(TextAlignment.RIGHT, winX + winW - PADDING, cy,
         //        txt(value ? "ON" : "OFF", value ? 0x55FF55 : 0xFF5555));
 
