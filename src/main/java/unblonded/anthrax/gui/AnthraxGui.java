@@ -56,6 +56,16 @@ public class AnthraxGui {
         return collapsed ? TITLE_H : TITLE_H + winH;
     }
 
+    private final String title;
+
+    public AnthraxGui(int x, int y, String title) {
+        this.winX = x;
+        this.winY = y;
+        this.title = title;
+    }
+
+    public String getTitle() { return title; }
+
     // --- input ---
 
     public void onMouseClicked(MouseButtonEvent event) {
@@ -157,8 +167,6 @@ public class AnthraxGui {
     public void show() { visible = true; }
     public void hide() { visible = false; }
 
-    // --- widgets ---
-
     public void separator() {
         gfx.fill(winX + PADDING, cursorY, winX + winW - PADDING, cursorY + 1, 0xFF333366);
         cursorY += 5;
@@ -253,5 +261,9 @@ public class AnthraxGui {
         }
 
         clicking = false;
+    }
+
+    public boolean isHovered(double mx, double my) {
+        return mx >= winX && mx <= winX + winW && my >= winY && my <= winY + totalH();
     }
 }
