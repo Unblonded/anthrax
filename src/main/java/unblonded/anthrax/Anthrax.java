@@ -18,8 +18,8 @@ public class Anthrax implements ClientModInitializer {
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             CrystalAuraModule.INSTANCE.onTick(client);
-            if (guiKey.consumeClick() && client.screen == null) {
-                client.setScreen(new AnthraxScreen());
+            if (guiKey.consumeClick() && client.gui.screen() == null) {
+                client.gui.setScreen(new AnthraxScreen());
             }
         });
     }
