@@ -1,4 +1,4 @@
-package unblonded.anthrax.gui;
+package unblonded.anthrax.modules;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -11,9 +11,10 @@ public final class GuiModule {
     public final String description;
     public final String category;
 
-    private static BooleanSupplier enabled = null;
+    private final BooleanSupplier enabled;
     private final Consumer<Boolean> setEnabled;
     private final List<Setting> settings = new ArrayList<>();
+    private List<Setting> settingsView;
 
     public GuiModule(String name, String description, String category,
                      BooleanSupplier enabled, Consumer<Boolean> setEnabled) {
@@ -26,15 +27,16 @@ public final class GuiModule {
 
     public GuiModule add(Setting setting) {
         settings.add(setting);
+        settingsView = null;
         return this;
     }
 
-    public List<Setting> settings() { return settings; }
-    public static boolean isEnabled() { return enabled.getAsBoolean(); }
+    public List<Setting> settings() {
+        if (settingsView == null) settingsView = List.copyOf(settings);
+        return settingsView;
+    }
+    public boolean isEnabled() { return enabled.getAsBoolean(); }
     public void setEnabled(boolean v) { setEnabled.accept(v); }
     public void toggle() { setEnabled(!isEnabled()); }
 
-    public static boolean isEnabled(GuiModule guiModule) {
-        return guiModule.isEnabled();
-    }
 }

@@ -2,16 +2,9 @@
 	"schemaVersion": 1,
 	"id": "anthrax",
 	"version": "${version}",
-	"name": "anthrax",
-	"description": "This is an example description! Tell everyone what your mod is about!",
-	"authors": [
-		"Me!"
-	],
-	"contact": {
-		"homepage": "https://fabricmc.net/",
-		"sources": "https://github.com/FabricMC/fabric-example-mod"
-	},
-	"license": "CC0-1.0",
+	"name": "Anthrax",
+	"description": "A customizable Fabric client mod.",
+	"license": "GPL-3.0-only",
 	"icon": "assets/anthrax/icon.png",
 	"environment": "*",
 	"entrypoints": {

@@ -7,12 +7,96 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.FontDescription;
 import net.minecraft.resources.Identifier;
 
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 public class AnthraxGui {
     private static final FontDescription FONT = new FontDescription.Resource(Identifier.fromNamespaceAndPath("anthrax", "segoeui"));
     private static final FontDescription ICON_FONT = new FontDescription.Resource(Identifier.fromNamespaceAndPath("anthrax", "fa-solid-900"));
 
+    // ---------------------------------------------------------------- component cache
+    // Styled components are immutable, so build each (text, color, font) once and reuse it every
+    // frame. Lookups use a reusable probe key so a cache hit allocates nothing. Render thread only.
+    private static final class CKey {
+        String text;
+        int color;
+        boolean icon;
+
+        CKey() {}
+
+        CKey(String text, int color, boolean icon) {
+            this.text = text;
+            this.color = color;
+            this.icon = icon;
+        }
+
+        @Override public int hashCode() {
+            return 31 * (31 * text.hashCode() + color) + (icon ? 1 : 0);
+        }
+
+        @Override public boolean equals(Object o) {
+            return o instanceof CKey k && color == k.color && icon == k.icon && text.equals(k.text);
+        }
+    }
+
+    private static final CKey PROBE = new CKey();
+    private static final Map<CKey, Component> CACHE = new LinkedHashMap<>(256, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<CKey, Component> eldest) {
+            return size() > 1024;
+        }
+    };
+
+    private static Component styled(String text, int color, boolean icon) {
+        PROBE.text = text;
+        PROBE.color = color;
+        PROBE.icon = icon;
+        Component cached = CACHE.get(PROBE);
+        if (cached != null) return cached;
+        Component made = Component.literal(text).withStyle(s -> s.withColor(color).withFont(icon ? ICON_FONT : FONT));
+        CACHE.put(new CKey(text, color, icon), made);
+        return made;
+    }
+
     private Component icon(String unicode, int color) {
-        return Component.literal(unicode).withStyle(s -> s.withColor(color).withFont(ICON_FONT));
+        return styled(unicode, color, true);
+    }
+
+    // font helper
+    private Component txt(String text, int color) {
+        return styled(text, color, false);
+    }
+
+    // ---------------------------------------------------------------- slider label cache
+    // "label  1.23" is only rebuilt when the displayed value actually changes (no String.format
+    // and no concatenation every frame).
+    private static final class LabelEntry {
+        int key = Integer.MIN_VALUE;
+        boolean fl;
+        String text;
+    }
+
+    private final Map<String, LabelEntry> labels = new HashMap<>();
+
+    private static String fmt2(int hundredths) {
+        boolean neg = hundredths < 0;
+        int a = Math.abs(hundredths);
+        int frac = a % 100;
+        return (neg ? "-" : "") + (a / 100) + "." + (frac < 10 ? "0" : "") + frac;
+    }
+
+    private String sliderLabel(String label, int key, boolean fl) {
+        LabelEntry e = labels.get(label);
+        if (e == null) {
+            e = new LabelEntry();
+            labels.put(label, e);
+        }
+        if (e.text == null || e.key != key || e.fl != fl) {
+            e.key = key;
+            e.fl = fl;
+            e.text = label + "  " + (fl ? fmt2(key) : Integer.toString(key));
+        }
+        return e.text;
     }
 
     // window state
@@ -46,11 +130,6 @@ public class AnthraxGui {
     private GuiGraphicsExtractor gfx;
     private int cursorY;
     private int screenW, screenH;
-
-    // font helper
-    private Component txt(String text, int color) {
-        return Component.literal(text).withStyle(s -> s.withColor(color).withFont(FONT));
-    }
 
     public int totalH() {
         return collapsed ? TITLE_H : TITLE_H + winH;
@@ -185,16 +264,12 @@ public class AnthraxGui {
         int cx = winX + PADDING;
         int cy = cursorY;
 
-        gfx.fill(cx, cy, cx + CHECKBOX_SIZE, cy + CHECKBOX_SIZE, 0xFF222244);
-        gfx.fill(cx, cy, cx + CHECKBOX_SIZE, cy + 1, 0xFF5555FF);
-        gfx.fill(cx, cy + CHECKBOX_SIZE - 1, cx + CHECKBOX_SIZE, cy + CHECKBOX_SIZE, 0xFF5555FF);
-        gfx.fill(cx, cy, cx + 1, cy + CHECKBOX_SIZE, 0xFF5555FF);
-        gfx.fill(cx + CHECKBOX_SIZE - 1, cy, cx + CHECKBOX_SIZE, cy + CHECKBOX_SIZE, 0xFF5555FF);
+        // border rect + inner rect (2 fills instead of 5)
+        gfx.fill(cx, cy, cx + CHECKBOX_SIZE, cy + CHECKBOX_SIZE, 0xFF5555FF);
+        gfx.fill(cx + 1, cy + 1, cx + CHECKBOX_SIZE - 1, cy + CHECKBOX_SIZE - 1, 0xFF222244);
         if (value) gfx.fill(cx + 2, cy + 2, cx + CHECKBOX_SIZE - 2, cy + CHECKBOX_SIZE - 2, 0xFF5555FF);
 
         gfx.textRenderer().accept(cx + CHECKBOX_SIZE + 4, cy - 2, txt(label, 0xFFFFFF));
-        //gfx.textRenderer().accept(TextAlignment.RIGHT, winX + winW - PADDING, cy,
-        //        txt(value ? "ON" : "OFF", value ? 0x55FF55 : 0xFF5555));
 
         boolean clicked = clicking
                 && mouseX >= cx && mouseX <= winX + winW - PADDING
@@ -209,7 +284,7 @@ public class AnthraxGui {
         int sy = cursorY + ROW_H + 2;
 
         gfx.textRenderer().accept(winX + PADDING, cursorY,
-                txt(label + "  " + String.format("%.2f", value), 0xAAAAAA));
+                txt(sliderLabel(label, Math.round(value * 100f), true), 0xAAAAAA));
 
         float t = (value - min) / (max - min);
         int fillW = (int)(t * sw);
@@ -232,7 +307,7 @@ public class AnthraxGui {
         int sy = cursorY + ROW_H + 2;
 
         gfx.textRenderer().accept(winX + PADDING, cursorY,
-                txt(label + "  " + value, 0xAAAAAA));
+                txt(sliderLabel(label, value, false), 0xAAAAAA));
 
         float t = (float)(value - min) / (max - min);
         int fillW = (int)(t * sw);
@@ -255,9 +330,10 @@ public class AnthraxGui {
         int minNeededH = (cursorY - (winY + TITLE_H)) + PADDING;
         if (winH < minNeededH) winH = minNeededH;
 
-        for (int i = 0; i < RESIZE_HANDLE; i++) {
+        // resize grip: a few stair-step fills instead of one per pixel column
+        for (int i = 0; i < RESIZE_HANDLE; i += 2) {
             int col = winX + winW - RESIZE_HANDLE + i;
-            gfx.fill(col, winY + totalH() - i - 1, winX + winW, winY + totalH(), 0xFF5555FF);
+            gfx.fill(col, winY + totalH() - i - 2, winX + winW, winY + totalH(), 0xFF5555FF);
         }
 
         clicking = false;

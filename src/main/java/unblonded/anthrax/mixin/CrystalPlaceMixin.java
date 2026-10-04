@@ -3,7 +3,7 @@ package unblonded.anthrax.mixin;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.BlockHitResult;
-import unblonded.anthrax.CrystalAuraModule;
+import unblonded.anthrax.modules.combat.CrystalAuraModule;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;

@@ -3,7 +3,16 @@
   "package": "unblonded.anthrax.mixin",
   "compatibilityLevel": "JAVA_25",
   "mixins": [
-    "CrystalPlaceMixin"
+    "CrystalPlaceMixin",
+    "ChatFilterMixin",
+    "ContainerScanMixin",
+    "NoRenderMixin",
+    "NoVignetteMixin",
+    "WeatherRenderMixin",
+    "FogRenderMixin",
+    "HandRenderMixin",
+    "PlayerEspMixin",
+    "WorldGizmoMixin"
   ],
   "injectors": {
     "defaultRequire": 1
