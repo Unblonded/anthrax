@@ -11,10 +11,12 @@ public final class HandRenderModule extends FeatureModule {
     private final Setting.Num y = setting(Setting.Num.standalone("Y offset", 0, -10, 10, .05));
     private final Setting.Num z = setting(Setting.Num.standalone("Z offset", 0, -10, 10, .05));
     private final Setting.Bool swordBlocking = setting(Setting.Bool.standalone("Sword blocking", false));
-    private HandRenderModule() { super("Hand Render", "Scale, move, and pose the first-person hand", "Visuals", false); }
+    private final Setting.Bool outline = setting(Setting.Bool.standalone("Hand and item outline", true));
+    private HandRenderModule() { super("Hand Render", "Scale, move, and pose the first-person hand", "Visuals", true); }
     public float scale() { return (float)scale.get(); }
     public float x() { return (float)x.get(); }
     public float y() { return (float)y.get(); }
     public float z() { return (float)z.get(); }
     public boolean swordBlocking() { return swordBlocking.get(); }
+    public boolean outline() { return outline.get(); }
 }

@@ -34,4 +34,5 @@ public abstract class HandRenderMixin {
             pose.mulPose(Axis.ZP.rotationDegrees(-95));
         }
     }
+
 }

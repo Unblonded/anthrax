@@ -11,6 +11,10 @@
     "WeatherRenderMixin",
     "FogRenderMixin",
     "HandRenderMixin",
+    "ItemStackRenderStateAccessor",
+    "ItemOutlineMixin",
+    "ModelPartAccessor",
+    "AvatarHandOutlineMixin",
     "PlayerEspMixin",
     "WorldGizmoMixin"
   ],

@@ -25,6 +25,7 @@ import unblonded.anthrax.modules.visual.NoRenderModule;
 import unblonded.anthrax.modules.visual.HandRenderModule;
 import unblonded.anthrax.modules.visual.BlockEspModule;
 import unblonded.anthrax.modules.visual.PlayerEspModule;
+import unblonded.anthrax.modules.visual.WorldThemeModule;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -68,6 +69,7 @@ public final class ModuleRegistry {
         addFeature(new PlayerListModule());
         addFeature(BlockEspModule.INSTANCE);
         addFeature(PlayerEspModule.INSTANCE);
+        addFeature(WorldThemeModule.INSTANCE);
         addFeature(FontSizeModule.INSTANCE);
         addFeature(CosmicCrosshairModule.INSTANCE);
         addFeature(NoRenderModule.INSTANCE);

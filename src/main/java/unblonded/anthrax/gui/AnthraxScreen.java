@@ -1220,6 +1220,7 @@ public class AnthraxScreen extends Screen {
             case "Player ESP" -> new ItemStack(Items.PLAYER_HEAD);
             case "Advanced ESP" -> new ItemStack(Items.SPYGLASS);
             case "Seed-Ray" -> new ItemStack(Items.DIAMOND_ORE);
+            case "World Themes" -> new ItemStack(Items.AMETHYST_SHARD);
             case "Font Size Override", "Loadout Manager" -> new ItemStack(Items.BOOK);
             case "Cosmic Crosshair", "Show Cosmic Crosshair" -> new ItemStack(Items.NETHER_STAR);
             case "No Render", "Interaction Canceler" -> new ItemStack(Items.BARRIER);
