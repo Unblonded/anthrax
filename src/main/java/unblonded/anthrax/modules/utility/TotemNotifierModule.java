@@ -1,34 +1,33 @@
 package unblonded.anthrax.modules.utility;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.network.chat.Component;
-import net.minecraft.world.item.Items;
+import net.minecraft.world.entity.player.Player;
+import unblonded.anthrax.gui.Notifications;
 import unblonded.anthrax.modules.FeatureModule;
+import unblonded.anthrax.modules.Setting;
+import unblonded.anthrax.modules.combat.TotemPops;
 
-/** Packet Edit's self totem-pop notifier: watches the local player's two hands and health. */
+/** Announces totem pops (yours and, optionally, everyone's) with a running per-life pop count. */
 public final class TotemNotifierModule extends FeatureModule {
-    private boolean hadTotem;
-    private boolean alreadyAlerted;
-    private float previousHealth;
-    public TotemNotifierModule() { super("Totem Notifier", "Notify when your totem pops", "Combat", false); }
+    private final Setting.Bool self = setting(Setting.Bool.standalone("Your pops", true));
+    private final Setting.Bool others = setting(Setting.Bool.standalone("Other players", true));
+    private final Setting.Bool chat = setting(Setting.Bool.standalone("Also log to chat", false));
 
-    @Override public void tick(Minecraft client) {
-        if (client.player == null || client.level == null || client.player.isCreative() || client.player.isSpectator()) {
-            hadTotem = false; previousHealth = 0; return;
-        }
-        var player = client.player;
-        boolean hasTotem = player.getOffhandItem().is(Items.TOTEM_OF_UNDYING)
-                || player.getMainHandItem().is(Items.TOTEM_OF_UNDYING);
-        float health = player.getHealth();
-        if (hadTotem && !hasTotem && !alreadyAlerted
-                && (previousHealth <= 2 || health < previousHealth - 6 || player.hurtTime > 0)) {
-            alreadyAlerted = true;
-            player.sendSystemMessage(Component.literal("Totem popped! Health: " + health));
-        }
-        if (!hadTotem && hasTotem) alreadyAlerted = false;
-        hadTotem = hasTotem;
-        previousHealth = health;
+    public TotemNotifierModule() {
+        super("Totem Notifier", "Announce totem pops with a running count per player", "Combat", false);
+        TotemPops.listen(this::onPop);
     }
 
-    @Override protected void onToggle(boolean enabled) { if (!enabled) { hadTotem = false; alreadyAlerted = false; previousHealth = 0; } }
+    private void onPop(Player player, int count) {
+        if (!isEnabled()) return;
+        Minecraft mc = Minecraft.getInstance();
+        boolean isSelf = player == mc.player;
+        if (isSelf ? !self.get() : !others.get()) return;
+        String who = isSelf ? "You" : player.getName().getString();
+        String text = who + " popped " + count + (count == 1 ? " totem" : " totems")
+                + (isSelf ? String.format(" (%.1f HP)", player.getHealth()) : "");
+        if (isSelf) Notifications.warn("Totem Pop", text);
+        else Notifications.info("Totem Pop", text);
+        if (chat.get() && mc.player != null) mc.player.sendSystemMessage(net.minecraft.network.chat.Component.literal("[Anthrax] " + text));
+    }
 }

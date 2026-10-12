@@ -17,6 +17,12 @@ public abstract class Setting {
         this.name = name;
     }
 
+    /** Records the current value as this setting's default. Called once, before saved values load. */
+    public void captureDefault() {}
+    /** Restores the captured default. */
+    public void reset() {}
+    public boolean isDefault() { return true; }
+
     // ------------------------------------------------------------------
     public static final class Bool extends Setting {
         private final BooleanSupplier getter;
@@ -37,6 +43,11 @@ public abstract class Setting {
         public boolean get() { return getter.getAsBoolean(); }
         public void set(boolean v) { setter.accept(v); }
         public void toggle() { set(!get()); }
+
+        private Boolean def;
+        @Override public void captureDefault() { if (def == null) def = get(); }
+        @Override public void reset() { if (def != null) set(def); }
+        @Override public boolean isDefault() { return def == null || def == get(); }
     }
 
     // ------------------------------------------------------------------
@@ -81,6 +92,14 @@ public abstract class Setting {
         }
 
         public double fraction() { return max == min ? 0 : (get() - min) / (max - min); }
+
+        /** Moves the value by whole steps (used by scroll/arrow nudging). */
+        public void nudge(int steps) { set(get() + steps * (step > 0 ? step : (max - min) / 100.0)); }
+
+        private double def = Double.NaN;
+        @Override public void captureDefault() { if (Double.isNaN(def)) def = get(); }
+        @Override public void reset() { if (!Double.isNaN(def)) set(def); }
+        @Override public boolean isDefault() { return Double.isNaN(def) || Math.abs(def - get()) < 1e-9; }
 
         public void setFraction(double f) { set(min + Math.max(0, Math.min(1, f)) * (max - min)); }
 
@@ -128,6 +147,11 @@ public abstract class Setting {
             int i = Math.floorMod(current + dir, options.size());
             setter.accept(options.get(i));
         }
+
+        private String def;
+        @Override public void captureDefault() { if (def == null) def = get(); }
+        @Override public void reset() { if (def != null) set(def); }
+        @Override public boolean isDefault() { return def == null || def.equals(get()); }
     }
 
     /** Editable short text value, used for search strings, names and commands. */
@@ -147,6 +171,11 @@ public abstract class Setting {
             if (value == null) value = "";
             setter.accept(value.substring(0, Math.min(value.length(), maxLength)));
         }
+
+        private String def;
+        @Override public void captureDefault() { if (def == null) def = get(); }
+        @Override public void reset() { if (def != null) set(def); }
+        @Override public boolean isDefault() { return def == null || def.equals(get()); }
     }
 
     /** One-shot control, rendered like a button in the module settings list. */

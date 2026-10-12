@@ -4,7 +4,6 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.network.chat.Component;
 import net.minecraft.world.inventory.Slot;
 import unblonded.anthrax.modules.FeatureModule;
 import unblonded.anthrax.modules.Setting;
@@ -94,6 +93,6 @@ public final class AutoSellModule extends FeatureModule {
         running = false; stage = 0; stageAt = 0; originalSlot = -1; owner = null; world = null;
         message(text);
     }
-    private static void message(String text) { if (Minecraft.getInstance().player != null) Minecraft.getInstance().player.sendSystemMessage(Component.literal(text)); }
+    private static void message(String text) { unblonded.anthrax.gui.Notifications.info("Auto Sell", text); }
     @Override protected void onToggle(boolean enabled) { if (!enabled) finish("Auto Sell stopped"); }
 }

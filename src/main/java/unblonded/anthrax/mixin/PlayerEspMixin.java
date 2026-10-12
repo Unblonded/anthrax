@@ -17,6 +17,8 @@ public abstract class PlayerEspMixin {
     private void anthrax$outlineOtherPlayers(Avatar entity, AvatarRenderState state, float tickDelta, CallbackInfo ci) {
         Minecraft client = Minecraft.getInstance();
         if (!PlayerEspModule.INSTANCE.isEnabled() || client.player == null || !(entity instanceof Player player)) return;
-        if (player.getId() != client.player.getId()) state.outlineColor = PlayerEspModule.INSTANCE.outlineColor();
+        if (player.getId() != client.player.getId())
+            state.outlineColor = unblonded.anthrax.modules.client.FriendsModule.isFriend(player)
+                    ? unblonded.anthrax.modules.client.FriendsModule.COLOR : PlayerEspModule.INSTANCE.outlineColor();
     }
 }

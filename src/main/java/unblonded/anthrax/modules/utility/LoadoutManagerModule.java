@@ -4,7 +4,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.network.chat.Component;
+import unblonded.anthrax.gui.Notifications;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.Item;
@@ -24,6 +24,7 @@ public final class LoadoutManagerModule extends FeatureModule {
     private final Setting.Text name = setting(Setting.Text.standalone("New loadout name", "", 32));
     private final Setting.Text selected = setting(Setting.Text.standalone("Selected loadout", "", 32));
     private final Setting.Num moveDelay = setting(Setting.Num.standalone("Move delay (ms)", 100, 0, 1000, 25));
+    private final Setting.Action cycle = setting(new Setting.Action("Next saved loadout", this::cycleSelected));
     private final Setting.Action save = setting(new Setting.Action("Save current", this::saveCurrent));
     private final Setting.Action apply = setting(new Setting.Action("Apply selected", this::applySelected));
     private final Setting.Action update = setting(new Setting.Action("Update selected", this::updateSelected));
@@ -53,11 +54,25 @@ public final class LoadoutManagerModule extends FeatureModule {
         if (slots.isEmpty()) { notify("Cannot save an empty inventory"); return; }
         loadouts.put(name.get().trim(), slots);
         selected.set(name.get().trim());
-        persist(); notify("Saved loadout: " + selected.get());
+        persist(); Notifications.success("Loadout", "Saved " + selected.get());
     }
 
-    private void updateSelected() { if (!selected.get().isBlank()) { name.set(selected.get()); saveCurrent(); } }
-    private void deleteSelected() { loadouts.remove(selected.get()); persist(); notify("Deleted loadout: " + selected.get()); selected.set(""); }
+    private void updateSelected() {
+        if (!loadouts.containsKey(selected.get())) { notify("Pick a saved loadout first"); return; }
+        name.set(selected.get()); saveCurrent();
+    }
+    private void deleteSelected() {
+        if (loadouts.remove(selected.get()) == null) { notify("Pick a saved loadout first"); return; }
+        persist(); notify("Deleted loadout: " + selected.get()); selected.set("");
+    }
+
+    private void cycleSelected() {
+        if (loadouts.isEmpty()) { notify("No saved loadouts yet"); return; }
+        List<String> names = new ArrayList<>(loadouts.keySet());
+        int next = (names.indexOf(selected.get()) + 1) % names.size();
+        selected.set(names.get(next));
+        notify("Selected " + selected.get() + " (" + (next + 1) + "/" + names.size() + ")");
+    }
     private void clearAll() { loadouts.clear(); persist(); selected.set(""); notify("Cleared saved loadouts"); }
 
     private void applySelected() {
@@ -68,19 +83,32 @@ public final class LoadoutManagerModule extends FeatureModule {
         swaps.clear();
         applyOwner = mc.player;
         applyWorld = mc.level;
-        Set<Integer> claimed = new HashSet<>();
+        // Plan against a simulated inventory: every swap moves two items, so later moves must see
+        // where earlier moves put things. Slots already satisfied are never used as a source.
+        int size = Math.min(41, mc.player.getInventory().getContainerSize());
+        String[] simulated = new String[size];
+        for (int i = 0; i < size; i++) simulated[i] = id(mc.player.getInventory().getItem(i));
+        Set<Integer> done = new HashSet<>();
         for (var entry : target.entrySet()) {
             int dest = entry.getKey();
-            if (dest >= mc.player.getInventory().getContainerSize() || id(mc.player.getInventory().getItem(dest)).equals(entry.getValue())) continue;
-            for (int src=0; src<mc.player.getInventory().getContainerSize(); src++) {
-                if (src == dest || claimed.contains(src)) continue;
-                if (id(mc.player.getInventory().getItem(src)).equals(entry.getValue())) {
-                    swaps.add(new Swap(src, dest)); claimed.add(src); claimed.add(dest); break;
-                }
+            if (dest < size && simulated[dest].equals(entry.getValue())) done.add(dest);
+        }
+        for (var entry : target.entrySet()) {
+            int dest = entry.getKey();
+            if (dest >= size || done.contains(dest)) continue;
+            for (int src = 0; src < size; src++) {
+                if (src == dest || done.contains(src) || !simulated[src].equals(entry.getValue())) continue;
+                swaps.add(new Swap(src, dest));
+                String moved = simulated[dest];
+                simulated[dest] = simulated[src];
+                simulated[src] = moved;
+                done.add(dest);
+                break;
             }
         }
         nextSwap = 0;
-        notify("Applying " + selected.get() + " (" + swaps.size() + " moves)");
+        if (swaps.isEmpty()) Notifications.success("Loadout", selected.get() + " is already applied");
+        else Notifications.info("Loadout", "Applying " + selected.get() + " (" + swaps.size() + " moves)");
     }
 
     private void tickApply(Minecraft mc) {
@@ -91,13 +119,18 @@ public final class LoadoutManagerModule extends FeatureModule {
             return;
         }
         if (System.currentTimeMillis() < nextSwap) return;
+        // Wait while another container is open or an item is on the cursor; clicks would go astray.
+        if (mc.player.containerMenu != mc.player.inventoryMenu || !mc.player.inventoryMenu.getCarried().isEmpty()) return;
         Swap swap = swaps.remove();
         int from = menuSlot(swap.from), to = menuSlot(swap.to), menu = mc.player.inventoryMenu.containerId;
         mc.gameMode.handleContainerInput(menu, from, 0, ContainerInput.PICKUP, mc.player);
         mc.gameMode.handleContainerInput(menu, to, 0, ContainerInput.PICKUP, mc.player);
         mc.gameMode.handleContainerInput(menu, from, 0, ContainerInput.PICKUP, mc.player);
         nextSwap = System.currentTimeMillis() + (long)moveDelay.get();
-        if (swaps.isEmpty()) { applyOwner = null; applyWorld = null; }
+        if (swaps.isEmpty()) {
+            applyOwner = null; applyWorld = null;
+            Notifications.success("Loadout", "Applied " + selected.get());
+        }
     }
 
     @Override protected void onToggle(boolean enabled) {
@@ -160,6 +193,6 @@ public final class LoadoutManagerModule extends FeatureModule {
         if (inventoryIndex == 40) return 45;
         return inventoryIndex;
     }
-    private static void notify(String text) { if (Minecraft.getInstance().player != null) Minecraft.getInstance().player.sendSystemMessage(Component.literal(text)); }
+    private static void notify(String text) { Notifications.info("Loadout", text); }
     private record Swap(int from, int to) {}
 }

@@ -1,60 +1,48 @@
 package unblonded.anthrax.modules.utility;
 
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
-import net.minecraft.client.Minecraft;
-import net.minecraft.world.entity.Entity;
 import net.minecraft.world.InteractionResult;
-import net.minecraft.world.entity.EntityType;
-import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.world.phys.AABB;
-import java.util.IdentityHashMap;
-import java.util.Map;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntitySelector;
+import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.entity.decoration.ItemFrame;
+import net.minecraft.world.entity.npc.villager.AbstractVillager;
+import net.minecraft.world.entity.vehicle.minecart.AbstractMinecart;
 import unblonded.anthrax.modules.FeatureModule;
+import unblonded.anthrax.modules.Setting;
 
-/** Prevents accidental interaction with commonly decorative or non-target entities. */
+import java.util.function.Predicate;
+
+/**
+ * Makes the crosshair pass straight through decorative or non-target entities, so you hit what is
+ * behind them (see EntityPickMixin). The entities still render and collide normally.
+ */
 public final class InteractionCancelerModule extends FeatureModule {
-    private final Map<Entity, AABB> suppressed = new IdentityHashMap<>();
-    private net.minecraft.client.multiplayer.ClientLevel lastLevel;
-    public InteractionCancelerModule() {
-        super("Interaction Canceler", "Ignore interactions with configured entities", "Utility", false);
-        ClientTickEvents.END_CLIENT_TICK.register(this::suppressGhostEntityHitboxes);
-        UseEntityCallback.EVENT.register((player, level, hand, entity, hit) -> {
-            if (!isEnabled() || !level.isClientSide()) return InteractionResult.PASS;
-            if (isGhost(entity)) return InteractionResult.FAIL;
-            return InteractionResult.PASS;
-        });
+    public static final InteractionCancelerModule INSTANCE = new InteractionCancelerModule();
+
+    private final Setting.Bool villagers = setting(Setting.Bool.standalone("Villagers and traders", true));
+    private final Setting.Bool frames = setting(Setting.Bool.standalone("Item frames", true));
+    private final Setting.Bool stands = setting(Setting.Bool.standalone("Armor stands", true));
+    private final Setting.Bool minecarts = setting(Setting.Bool.standalone("Minecarts", true));
+
+    private final Predicate<Entity> filter = entity -> EntitySelector.CAN_BE_PICKED.test(entity) && !isGhost(entity);
+
+    private InteractionCancelerModule() {
+        super("Interaction Canceler", "Aim and click through villagers, frames, stands and carts", "Utility", false);
+        UseEntityCallback.EVENT.register((player, level, hand, entity, hit) ->
+                level.isClientSide() && isGhost(entity) ? InteractionResult.FAIL : InteractionResult.PASS);
     }
 
-    private void suppressGhostEntityHitboxes(Minecraft client) {
-        if (client.level != lastLevel) {
-            restoreSuppressed();
-            lastLevel = client.level;
-        }
-        if (client.level == null || !isEnabled()) {
-            restoreSuppressed();
-            return;
-        }
-        for (Entity entity : client.level.entitiesForRendering()) {
-            if (isGhost(entity) && !suppressed.containsKey(entity)) {
-                suppressed.put(entity, entity.getBoundingBox());
-                entity.setBoundingBox(new AABB(0, 0, 0, 0, 0, 0));
-            }
-        }
-    }
-
-    private void restoreSuppressed() {
-        suppressed.keySet().forEach(entity -> {
-            if (!entity.isRemoved()) entity.refreshDimensions();
-        });
-        suppressed.clear();
+    /** Picking predicate used by the local player's crosshair raycast. */
+    public static Predicate<Entity> pickFilter() {
+        return INSTANCE.isEnabled() ? INSTANCE.filter : EntitySelector.CAN_BE_PICKED;
     }
 
     private boolean isGhost(Entity entity) {
-        EntityType<?> type = entity.getType();
-        String id = BuiltInRegistries.ENTITY_TYPE.getKey(type).getPath();
-        return id.equals("villager") || id.equals("wandering_trader")
-                || id.equals("item_frame") || id.equals("glow_item_frame") || id.equals("armor_stand")
-                || id.endsWith("minecart");
+        if (!isEnabled()) return false;
+        return (villagers.get() && entity instanceof AbstractVillager)
+                || (frames.get() && entity instanceof ItemFrame)
+                || (stands.get() && entity instanceof ArmorStand)
+                || (minecarts.get() && entity instanceof AbstractMinecart);
     }
 }

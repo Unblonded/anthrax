@@ -9,7 +9,9 @@ import net.minecraft.client.input.KeyEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import unblonded.anthrax.Anthrax;
 import unblonded.anthrax.modules.GuiModule;
+import unblonded.anthrax.modules.Keybinds;
 import unblonded.anthrax.modules.ModuleConfig;
 import unblonded.anthrax.modules.ModuleRegistry;
 import unblonded.anthrax.modules.Setting;
@@ -27,6 +29,7 @@ import java.util.Map;
 import java.util.Random;
 import java.util.function.IntConsumer;
 import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 
 import static unblonded.anthrax.gui.Draw.*;
 
@@ -64,7 +67,6 @@ public class AnthraxScreen extends Screen {
         boolean contains(int px, int py) { return inside(px, py, x, y, w, h); }
     }
 
-    private record Toast(String title, String msg, boolean err, long born) {}
     /** Mutable key so cache hits can be looked up with a reusable probe (no allocation per call). */
     private static final class FitKey {
         String value;
@@ -93,7 +95,7 @@ public class AnthraxScreen extends Screen {
 
     private static final class CardState {
         boolean open;
-        float expand, hover, enable;
+        float expand, hover, enable, lift, liftV;
         String initials;
         ItemStack icon;
         boolean iconInit;
@@ -113,7 +115,19 @@ public class AnthraxScreen extends Screen {
     private static final Map<FitKey, String> FIT_TEXT_CACHE = new LinkedHashMap<>(256, .75f, true) {
         @Override protected boolean removeEldestEntry(Map.Entry<FitKey, String> eldest) { return size() > 2048; }
     };
-    private final List<Toast> toasts = new ArrayList<>();
+    // search, keybinding and tooltip state
+    private String search = "";
+    private boolean searchFocused;
+    private final List<GuiModule> searchResults = new ArrayList<>();
+    private String searchComputedFor;
+    private GuiModule binding;
+    private GuiModule bindingBeforeClick;
+    private Setting.Num hoveredSlider;
+    private boolean swallowNextChar;
+    private GuiModule hoverModule;
+    private long hoverSince;
+    private String tooltip;
+    private int tooltipX, tooltipY;
     private int previousModuleCount = -1;
     private String moduleCountText;
 
@@ -131,7 +145,10 @@ public class AnthraxScreen extends Screen {
 
     private int category = -1;
     private float scroll, scrollTarget, contentHeight;
-    private float tabY = -1;
+    private float tabY = -1, tabV;
+    /** Per-setting animation state: [0] value position, [1] hover, [2] spring velocity. */
+    private final Map<Setting, float[]> settingAnim = new IdentityHashMap<>();
+    private Setting.Num draggingSlider;
     private Drag activeDrag;
     private Setting.Text focusedText;
     private boolean selectAllText;
@@ -177,10 +194,15 @@ public class AnthraxScreen extends Screen {
     // =====================================================================
     //  frame
     // =====================================================================
+    /** Blur the live world behind the menu; the liquid-glass panes are drawn on top of it. */
+    @Override
+    public void extractBackground(GuiGraphicsExtractor g, int mouseX, int mouseY, float delta) {
+        if (Draw.FX > 0) extractBlurredBackground(g);
+    }
+
     @Override
     public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float delta) {
-        // Intentionally NOT calling super.extractRenderState(...): it runs vanilla's blur/dim
-        // background pass, and this screen paints its own backdrop and has no vanilla widgets.
+        // Not calling super: this screen paints its own glass UI and has no vanilla widgets.
 
         Draw.measureFont = this.font;
         // Keep the virtual canvas tied to the window scale. Apply the module's
@@ -253,245 +275,115 @@ public class AnthraxScreen extends Screen {
 
     private void drawAll(GuiGraphicsExtractor g, int pw, int ph, float dt, long wallMs, long nowNs) {
         hitCount = 0;
+        tooltip = null;
+        hoveredSlider = null;
         long ms = wallMs - startMs;
         Theme.tick(wallMs);
         Draw.S = Math.max(1, Math.min(4, Math.min(Math.round(ph / 720f), Math.min(pw / 600, ph / 400))));
         int accent = Theme.accent(), accent2 = Theme.accent2();
 
         float introT = (nowNs - openNs) / 1_000_000_000f;
-        float open = easeOut(introT / 0.4f);
+        float open = easeOut(introT / 0.45f);
 
-        // ---- backdrop: dim, vignette, drifting color blobs, particle network, shooting star
-        g.fill(0, 0, pw, ph, alpha(0x050509, (int) (0xC8 * open)));
-        if (FANCY) {
-            int vignette = u(24);
-            int vignetteOuter = alpha(0x000000, (int) (0x48 * open));
-            int vignetteInner = alpha(0x000000, (int) (0x09 * open));
-            g.fillGradient(0, 0, pw, vignette, vignetteOuter, vignetteInner);
-            g.fillGradient(0, ph - vignette, pw, ph, vignetteInner, vignetteOuter);
-            hgrad(g, 0, 0, vignette, ph, vignetteOuter, vignetteInner);
-            hgrad(g, pw - vignette, 0, vignette, ph, vignetteInner, vignetteOuter);
-        }
-        if (FANCY) {
-            drawBlobs(g, pw, ph, ms, open, accent, accent2);
-            drawParticles(g, pw, ph, dt, open, accent, accent2, ms);
-            drawStar(g, pw, ph, ms, open, accent2);
-        }
+        // ---- backdrop: veil over the blurred world, tinted light, drifting liquid orbs
+        g.fill(0, 0, pw, ph, alpha(0x05060B, (int) ((FX > 0 ? 0x5C : 0xC0) * open)));
+        g.fillGradient(0, 0, pw, ph, alpha(accent, (int) (0x10 * open)), alpha(accent2, (int) (0x18 * open)));
+        if (FX >= 2) drawOrbs(g, pw, ph, ms, open, accent, accent2);
 
-        // ---- window geometry
         if (GuiPreferences.separateCategoryWindows()) {
             drawDetachedWindows(g, pw, ph, dt, ms, nowNs, open, accent, accent2);
-            drawToasts(g, pw, ph, accent);
-            drawTrail(g, accent, accent2);
+            Hud.toasts(g, pw, ph, accent, u(18));
+            drawTooltip(g, pw, ph, accent);
             return;
         }
 
-        int ww = u(580), wh = u(380);
+        int ww = u(600), wh = u(392);
         int maxWX = Math.max(0, pw - ww), maxWY = Math.max(0, ph - wh);
         double[] storedMain = GuiPreferences.windowPosition("__main");
         if (storedMain == null) storedMain = new double[]{.5, .5};
         int wx = Math.round((float) (storedMain[0] * maxWX));
         int wy = Math.round((float) (storedMain[1] * maxWY));
-        int introOffset = Math.round((1f - open) * u(30));
+        int introOffset = Math.round((1f - open) * u(24));
         wy += introOffset;
-        int r = u(14), t = S;
-        int headerH = u(44), sideW = u(128), footH = u(26);
-        int ix = wx + t, iw = ww - 2 * t;
-        int footTop = wy + wh - t - footH;
+        int r = u(24);
+        int headerH = u(52), sideW = u(136), footH = u(30);
+        int ix = wx, iw = ww;
+        int footTop = wy + wh - footH;
         int bodyTop = wy + headerH;
 
-        // shadow + pulsing accent glow
-        for (int i = 2; i >= 1; i--) {
-            int e = u(i * 5);
-            roundFast(g, wx - e, wy - e + u(5), ww + 2 * e, wh + 2 * e, r + e, alpha(0x000000, (int) (0x14 * open)));
-        }
-        float pulse = 0.5f + 0.5f * (float) Math.sin(ms / 700.0);
-        if (FANCY) {
-            for (int i = 2; i >= 1; i--) {
-                int e = u(i * 4);
-                roundFast(g, wx - e, wy - e, ww + 2 * e, wh + 2 * e, r + e, alpha(accent, (int) ((6 + 6 * pulse) * open)));
-            }
-        }
+        // intro: the pane settles from 96% scale, like a sheet landing on glass
+        float scaleIn = 0.96f + 0.04f * open;
+        g.pose().pushMatrix();
+        g.pose().translate(wx + ww / 2f, wy + wh / 2f);
+        g.pose().scale(scaleIn, scaleIn);
+        g.pose().translate(-(wx + ww / 2f), -(wy + wh / 2f));
+        try {
+            shadow(g, wx, wy, ww, wh, r, u(22), (int) (0x70 * open));
+            glass(g, wx, wy, ww, wh, r, alpha(0x0E1119, 0xB4), 1f);
+            if (FX >= 2) drawCursorLight(g, wx, wy, ww, wh);
+            drawRimSweep(g, wx, wy, ww, r, ms, introT);
 
-        // HUD corner brackets floating just outside the window
-        int bk = u(7);
-        brackets(g, wx - bk, wy - bk, ww + 2 * bk, wh + 2 * bk, u(18), S,
-                alpha(accent, (int) ((0x60 + 0x70 * pulse) * open)));
+            fill(g, wx + r, bodyTop, ww - 2 * r, Math.max(1, S / 2), 0x16FFFFFF);
+            fill(g, wx + r, footTop, ww - 2 * r, Math.max(1, S / 2), 0x10FFFFFF);
 
-        roundBorder(g, wx, wy, ww, wh, r, t, lerp(Theme.LINE, accent, 0.35f + 0.2f * pulse), Theme.BG);
-
-        round(g, ix, wy + t, iw, headerH - t, r - t, Theme.HEADER, true, false);
-        round(g, ix, footTop, iw, footH, r - t, Theme.HEADER, false, true);
-        fill(g, ix, footTop, iw, t, Theme.LINE);
-        fill(g, ix, bodyTop, sideW - t, footTop - bodyTop, Theme.SIDE);
-        fill(g, ix + sideW - t, bodyTop, t, footTop - bodyTop, Theme.LINE);
-
-        // gradient line under header + travelling shine
-        int lineH = Math.max(1, S);
-        hgrad(g, ix, bodyTop - lineH, iw / 2, lineH, accent, accent2);
-        hgrad(g, ix + iw / 2, bodyTop - lineH, iw - iw / 2, lineH, accent2, Theme.HEADER);
-        int shineX = ix + Math.round((((ms / 1900f) % 1.4f) - 0.2f) * iw);
-        shine(g, ix, iw, bodyTop - lineH, lineH, shineX, u(90), 0xD0);
-
-        // neon edges: scrolling rainbow on top, accent gradient + opposing shine on bottom
-        int edgeX = wx + r, edgeW = ww - 2 * r;
-        rainbow(g, edgeX, wy, edgeW, t, Theme.hue, 0.9f);
-        hgrad(g, edgeX, wy + wh - t, edgeW / 2, t, accent2, accent);
-        hgrad(g, edgeX + edgeW / 2, wy + wh - t, edgeW - edgeW / 2, t, accent, accent2);
-        if (FANCY) {
-            int bx = edgeX + edgeW - Math.round((((ms / 2300f) % 1.4f) - 0.2f) * edgeW);
-            shine(g, edgeX, edgeW, wy + wh - t, t, bx, u(110), 0xB0);
+            final int dragOffsetX = mx - wx, dragOffsetY = my - wy;
+            hit(wx + u(8), wy + u(4), u(150), headerH - u(8), false, null, (px, py) -> {
+                int nx = Math.max(0, Math.min(maxWX, px - dragOffsetX));
+                int ny = Math.max(0, Math.min(maxWY, py - dragOffsetY - introOffset));
+                GuiPreferences.setWindowPosition("__main", maxWX == 0 ? 0 : nx / (double) maxWX,
+                        maxWY == 0 ? 0 : ny / (double) maxWY);
+            });
+            drawHeader(g, ix, iw, wy, headerH, accent, accent2, ms);
+            drawSidebar(g, ix, bodyTop, footTop, sideW, accent, accent2, dt, ms);
+            drawContent(g, ix, iw, bodyTop, footTop, sideW, accent, accent2, dt, ms, nowNs);
+            drawFooter(g, ix, iw, footTop, footH);
+        } finally {
+            g.pose().popMatrix();
         }
 
-        // boot flash racing across the top edge when the screen opens
-        if (introT < 0.9f) {
-            float p = easeOut(introT / 0.7f);
-            int fa = (int) (0xFF * (1f - introT / 0.9f));
-            shineC(g, edgeX, edgeW, wy, t * 2, edgeX + Math.round(p * edgeW), u(150), fa, 0xFFFFFF);
-        }
-
-        final int dragOffsetX = mx - wx, dragOffsetY = my - wy;
-        hit(wx + u(8), wy + u(4), u(150), headerH - u(8), false, null, (px, py) -> {
-            int nx = Math.max(0, Math.min(maxWX, px - dragOffsetX));
-            int ny = Math.max(0, Math.min(maxWY, py - dragOffsetY - introOffset));
-            GuiPreferences.setWindowPosition("__main", maxWX == 0 ? 0 : nx / (double) maxWX,
-                    maxWY == 0 ? 0 : ny / (double) maxWY);
-        });
-        drawHeader(g, ix, iw, wy, headerH, accent, accent2, ms);
-        drawSidebar(g, ix, bodyTop, footTop, sideW, accent, accent2, dt, ms);
-        drawContent(g, ix, iw, bodyTop, footTop, sideW, accent, accent2, dt, ms, nowNs);
-        drawFooter(g, ix, iw, footTop, footH);
-
-        // slow holographic scan sweep: fades out near the window edges instead of using a scissor
-        if (FANCY) {
-            float sp = (ms % 5200L) / 5200f;
-            int bandH = u(70);
-            int sTop = wy + u(6), sBottom = wy + wh - u(6);
-            int by = sTop + Math.round(sp * (sBottom - sTop + bandH)) - bandH;
-            int mid = by + bandH / 2;
-            float edge = Math.min(mid - sTop, sBottom - mid) / (float) (bandH / 2);
-            int pa = (int) (0x16 * Math.min(1f, Math.max(0f, edge)));
-            if (pa > 0) {
-                g.fillGradient(wx + u(6), by, wx + ww - u(6), mid, alpha(accent, 0), alpha(accent, pa));
-                g.fillGradient(wx + u(6), mid, wx + ww - u(6), by + bandH, alpha(accent, pa), alpha(accent, 0));
-            }
-        }
-
-        drawToasts(g, pw, ph, accent);
-        drawTrail(g, accent, accent2);
+        Hud.toasts(g, pw, ph, accent, u(18));
+        drawTooltip(g, pw, ph, accent);
     }
 
     // =====================================================================
     //  backdrop effects
     // =====================================================================
-    /** Two big soft color blobs drifting behind the window. */
-    private void drawBlobs(GuiGraphicsExtractor g, int pw, int ph, long ms, float open, int accent, int accent2) {
+    /** Big, slow, soft color orbs drifting behind the glass; they give the panes something to refract. */
+    private void drawOrbs(GuiGraphicsExtractor g, int pw, int ph, long ms, float open, int accent, int accent2) {
         if (open < 0.05f) return;
-        int a = (int) (16 * open);
-        glow(g, Math.round(pw * (0.22f + 0.06f * (float) Math.sin(ms / 4700.0))),
-                Math.round(ph * (0.30f + 0.08f * (float) Math.cos(ms / 3900.0))), u(230), accent, 3, a);
-        glow(g, Math.round(pw * (0.80f + 0.05f * (float) Math.cos(ms / 5300.0))),
-                Math.round(ph * (0.72f + 0.08f * (float) Math.sin(ms / 4100.0))), u(230), accent2, 3, a);
-    }
-
-    private void drawParticles(GuiGraphicsExtractor g, int pw, int ph, float dt, float open, int accent, int accent2, long ms) {
-        int pc = FX >= 2 ? 16 : 10;
-        if (particles == null || particles.length != pc || partW != pw || partH != ph) {
-            Random rnd = new Random(7);
-            particles = new Particle[pc];
-            for (int i = 0; i < particles.length; i++) {
-                Particle p = new Particle();
-                p.x = rnd.nextFloat() * pw;
-                p.y = rnd.nextFloat() * ph;
-                p.vx = (rnd.nextFloat() - 0.5f) * u(22);
-                p.vy = (rnd.nextFloat() - 0.5f) * u(22);
-                p.ph = rnd.nextFloat() * 6.2832f;
-                p.sz = rnd.nextFloat();
-                particles[i] = p;
-            }
-            partW = pw;
-            partH = ph;
-        }
-        int link = u(90), mouseLink = u(110);
-        float linkSq = (float) link * link, mouseSq = (float) mouseLink * mouseLink;
-        for (Particle p : particles) {
-            p.x += p.vx * dt;
-            p.y += p.vy * dt;
-            if (p.x < 0 || p.x > pw) p.vx = -p.vx;
-            if (p.y < 0 || p.y > ph) p.vy = -p.vy;
-            float tw = 0.65f + 0.35f * (float) Math.sin(ms / 420.0 + p.ph);
-            int dotA = alpha(accent2, (int) (0xB0 * open * tw));
-            boolean big = p.sz > 0.8f;
-            int ds = S + 1 + (big ? S : 0);
-            if (big && FX >= 2) glow(g, (int) p.x, (int) p.y, u(7), accent2, 2, (int) (10 * open));
-            fill(g, (int) p.x - ds / 2, (int) p.y - ds / 2, ds, ds, dotA);
-        }
-        for (int i = 0; i < particles.length; i++) {
-            Particle a = particles[i];
-            for (int j = i + 1; j < particles.length; j++) {
-                Particle b = particles[j];
-                float dx = a.x - b.x, dy = a.y - b.y;
-                float d2 = dx * dx + dy * dy;
-                if (d2 < linkSq) {
-                    float d = (float) Math.sqrt(d2);
-                    line(g, (int) a.x, (int) a.y, (int) b.x, (int) b.y, d, S,
-                            alpha(accent, (int) ((1 - d / link) * 0x48 * open)));
-                }
-            }
-            float dx = a.x - mx, dy = a.y - my;
-            float d2 = dx * dx + dy * dy;
-            if (d2 < mouseSq) {
-                float d = (float) Math.sqrt(d2);
-                line(g, (int) a.x, (int) a.y, mx, my, d, S,
-                        alpha(accent2, (int) ((1 - d / mouseLink) * 0x90 * open)));
-            }
+        int a = (int) (22 * open);
+        glow(g, Math.round(pw * (0.24f + 0.08f * (float) Math.sin(ms / 5200.0))),
+                Math.round(ph * (0.28f + 0.10f * (float) Math.cos(ms / 4300.0))), u(260), accent, 4, a);
+        glow(g, Math.round(pw * (0.78f + 0.06f * (float) Math.cos(ms / 6100.0))),
+                Math.round(ph * (0.70f + 0.09f * (float) Math.sin(ms / 4700.0))), u(240), accent2, 4, a);
+        if (FX >= 2) {
+            glow(g, Math.round(pw * (0.55f + 0.20f * (float) Math.sin(ms / 7300.0))),
+                    Math.round(ph * (0.15f + 0.05f * (float) Math.cos(ms / 3900.0))), u(180),
+                    hsl(Theme.hue + 120, 0.8f, 0.6f), 3, a * 2 / 3);
         }
     }
 
-    /** An occasional shooting star streaking across the backdrop. */
-    private void drawStar(GuiGraphicsExtractor g, int pw, int ph, long ms, float open, int accent2) {
-        if (starStart < 0) {
-            if (ms < nextStar) return;
-            starStart = ms;
-            starX = pw * (0.05f + 0.7f * fxRnd.nextFloat());
-            starY = ph * (0.02f + 0.35f * fxRnd.nextFloat());
-            starAng = 0.45f + 0.35f * fxRnd.nextFloat();
-        }
-        float p = (ms - starStart) / 750f;
-        if (p >= 1f) {
-            starStart = -1;
-            nextStar = ms + 2200 + fxRnd.nextInt(3500);
-            return;
-        }
-        float cos = (float) Math.cos(starAng), sin = (float) Math.sin(starAng);
-        float dist = u(340) * p;
-        int hx = Math.round(starX + cos * dist), hy = Math.round(starY + sin * dist);
-        float fade = (float) Math.sin(Math.PI * p) * open;
-        int tail = u(80);
-        streak(g, Math.round(hx - cos * tail), Math.round(hy - sin * tail), starAng, tail, S,
-                alpha(0xFFFFFF, 0), alpha(0xFFFFFF, (int) (0xE0 * fade)));
-        glow(g, hx, hy, u(9), accent2, 2, (int) (12 * fade));
-        fill(g, hx - S, hy - S, S * 2, S * 2, alpha(0xFFFFFF, (int) (0xFF * fade)));
+    /** A soft light that follows the cursor across the glass, clipped to the pane. */
+    private void drawCursorLight(GuiGraphicsExtractor g, int x, int y, int w, int h) {
+        if (!inside(mx, my, x - u(40), y - u(40), w + u(80), h + u(80))) return;
+        g.enableScissor(x + u(6), y + u(6), x + w - u(6), y + h - u(6));
+        glow(g, mx, my, u(150), 0xFFFFFF, 3, 7);
+        g.disableScissor();
     }
 
-    /** Glowing sparkle trail following the mouse. */
-    private void drawTrail(GuiGraphicsExtractor g, int accent, int accent2) {
+    /** A highlight that glides along the top rim now and then, plus a bright pass when the menu opens. */
+    private void drawRimSweep(GuiGraphicsExtractor g, int x, int y, int w, int r, long ms, float introT) {
         if (!FANCY) return;
-        int n = FX >= 2 ? trX.length : 8;
-        if (!trInit) {
-            Arrays.fill(trX, mx);
-            Arrays.fill(trY, my);
-            trInit = true;
+        int rimX = x + r, rimW = w - 2 * r, t = Math.max(1, S / 2 + (S > 2 ? 1 : 0));
+        float cycle = (ms % 6500L) / 6500f;
+        if (cycle < 0.35f) {
+            float p = cycle / 0.35f;
+            int a = (int) (0xB0 * Math.sin(Math.PI * p));
+            shineC(g, rimX, rimW, y, t, rimX + Math.round(p * rimW), u(120), a, 0xFFFFFF);
         }
-        trHead = (trHead + 1) % n;
-        trX[trHead] = mx;
-        trY[trHead] = my;
-        for (int k = 0; k < n; k++) {
-            int idx = (trHead - k + n) % n;
-            float f = 1f - k / (float) n;
-            int sz = Math.max(S, Math.round(S * 2 * f));
-            fill(g, trX[idx] - sz / 2, trY[idx] - sz / 2, sz, sz,
-                    alpha(lerp(accent2, accent, k / (float) n), (int) (0xB0 * f * f)));
+        if (introT < 1f) {
+            float p = easeOut(introT / 0.8f);
+            shineC(g, rimX, rimW, y, t * 2, rimX + Math.round(p * rimW), u(160), (int) (0xFF * (1f - introT)), 0xFFFFFF);
         }
     }
 
@@ -501,102 +393,189 @@ public class AnthraxScreen extends Screen {
     private void drawHeader(GuiGraphicsExtractor g, int ix, int iw, int wy, int headerH, int accent, int accent2, long ms) {
         int cy = wy + headerH / 2;
 
-        int mark = u(26);
-        int mcx = ix + u(14) + mark / 2;
-        glow(g, mcx, cy, u(22), accent, 4, 10 + (int) (8 * Math.sin(ms / 500.0)));
-        round(g, ix + u(14), cy - mark / 2, mark, mark, u(8), accent);
-        textC(g, mcx, cy, "A", Theme.BG, true);
+        // app mark: a glossy accent bead
+        int mark = u(28);
+        int mx0 = ix + u(16), my0 = cy - mark / 2;
+        if (FANCY) glow(g, mx0 + mark / 2, cy, u(24), accent, 3, 10 + (int) (6 * Math.sin(ms / 600.0)));
+        bead(g, mx0, my0, mark, accent);
+        textC(g, mx0 + mark / 2, cy + S / 2, "A", 0xFFFFFFFF, true);
 
-        // comet orbiting the logo
-        if (FANCY) {
-            double oa = ms / 650.0;
-            int orb = u(19);
-            for (int k = 0; k < 5; k++) {
-                double a = oa - k * 0.25;
-                int ox = mcx + (int) Math.round(Math.cos(a) * orb);
-                int oy = cy + (int) Math.round(Math.sin(a) * orb);
-                int sz = k == 0 ? S + 1 : S;
-                fill(g, ox - sz / 2, oy - sz / 2, sz, sz, alpha(0xFFFFFF, 0xFF - k * 50));
-            }
-        }
+        int tx = mx0 + mark + u(10);
+        if (Theme.idx == 0) textRainbow(g, tx, cy - u(6), "Anthrax", Theme.hue, 22f, true);
+        else text(g, tx, cy - u(6), "Anthrax", Theme.TEXT, true);
+        text(g, tx, cy + u(8), "Liquid client", Theme.MUTED, false);
 
-        textRainbow(g, ix + u(52), cy - u(7), "ANTHRAX", Theme.hue, 22f, true);
-        text(g, ix + u(52), cy + u(8), "combat client", Theme.MUTED, false);
-        if ((ms / 500L) % 2 == 0) {
-            text(g, ix + u(52) + textWidth("combat client", false) + S, cy + u(8), "_", accent, false);
-        }
+        int fpsCol = fps >= 60 ? Theme.OK : fps >= 30 ? 0xFFFFC94A : Theme.DANGER;
+        drawSearch(g, ix + u(166), cy, u(170), accent);
+        chip(g, ix + u(344), cy, u(60), fpsText, fpsCol);
 
-        int fpsCol = fps >= 60 ? Theme.OK : fps >= 30 ? 0xFFE6C84A : Theme.DANGER;
-        chip(g, ix + u(172), cy, u(92), "26.2 / FABRIC", Theme.MUTED);
-        chip(g, ix + u(272), cy, u(64), clockText, Theme.MUTED);
-        chip(g, ix + u(344), cy, u(56), fpsText, fpsCol);
-
-        int bh = u(22);
-        int closeX = ix + iw - u(14) - bh;
-        int themeW = u(88);
+        int bh = u(26);
+        int closeX = ix + iw - u(16) - bh;
+        int themeW = u(84);
         int themeX = closeX - u(8) - themeW;
-        int fxW = u(32);
+        int fxW = u(46);
         int fxX = themeX - u(6) - fxW;
 
         button(g, fxX, cy - bh / 2, fxW, bh, FX_NAMES[FX], accent, () -> {
             Draw.setFx(Draw.FX + 1);
-            toast("EFFECTS", FX_LONG[Draw.FX], false);
+            toast("Effects", FX_LONG[Draw.FX], false);
         });
-        circle(g, fxX + fxW - u(5), cy - bh / 2 + u(5), u(2), FX == 2 ? accent : FX == 1 ? Theme.OK : Theme.DIM);
-
         button(g, themeX, cy - bh / 2, themeW, bh, Theme.NAMES[Theme.idx], accent, () -> {
             Theme.next();
-            toast("THEME", Theme.NAMES[Theme.idx], false);
+            toast("Theme", Theme.NAMES[Theme.idx], false);
         });
-        button(g, closeX, cy - bh / 2, bh, bh, "X", Theme.DANGER, this::onClose);
+        circle(g, themeX + u(12), cy, u(4), accent);
+        iconButton(g, closeX, cy - bh / 2, bh, Icons.XMARK, Theme.DANGER, this::onClose);
+    }
+
+    private void drawSearch(GuiGraphicsExtractor g, int x, int cy, int w, int accent) {
+        int h = u(26), y = cy - h / 2;
+        boolean hov = inside(mx, my, x, y, w, h);
+        boolean active = searchFocused || !search.isEmpty();
+        round(g, x, y, w, h, h / 2, alpha(0x000000, searchFocused ? 0x48 : 0x30));
+        outline(g, x, y, w, h, h / 2, Math.max(1, S / 2),
+                searchFocused ? alpha(accent, 0xE0) : alpha(0xFFFFFF, hov ? 0x40 : 0x22),
+                searchFocused ? alpha(accent, 0x90) : alpha(0xFFFFFF, hov ? 0x20 : 0x12));
+        if (searchFocused && FANCY) roundFast(g, x - u(3), y - u(3), w + u(6), h + u(6), h / 2 + u(3), alpha(accent, 0x18));
+        icon(g, x + u(14), cy, Icons.MAGNIFYING_GLASS, active ? accent : Theme.MUTED);
+        int tx = x + u(26), maxW = w - u(26) - u(24);
+        String shown = fitTail(search, maxW);
+        if (search.isEmpty()) {
+            if (!searchFocused) text(g, tx, cy, "Search", Theme.MUTED, false);
+            if (!searchFocused) textR(g, x + w - u(12), cy, "Ctrl F", Theme.DIM, false);
+        } else {
+            text(g, tx, cy, shown, Theme.TEXT, false);
+        }
+        if (searchFocused && (System.currentTimeMillis() / 500) % 2 == 0) {
+            int caretX = tx + (search.isEmpty() ? 0 : textWidth(shown, false)) + S;
+            fill(g, caretX, cy - u(7), S, u(14), accent);
+        }
+        hit(x, y, w, h, false, b -> { searchFocused = true; focusedText = null; }, null);
+        if (!search.isEmpty()) {
+            int cx = x + w - u(14);
+            boolean clearHov = inside(mx, my, cx - u(9), y, u(18), h);
+            circle(g, cx, cy, u(7), clearHov ? alpha(Theme.DANGER, 0xC0) : 0x40FFFFFF);
+            icon(g, cx, cy, Icons.XMARK, 0xFFFFFFFF);
+            hit(cx - u(9), y, u(18), h, false, b -> { search = ""; searchFocused = false; scrollTarget = 0; }, null);
+        }
+    }
+
+    private boolean searching() { return !search.isBlank() && !GuiPreferences.separateCategoryWindows(); }
+
+    /** Modules whose name, description, category or setting names contain every typed word. */
+    private List<GuiModule> searchResults() {
+        String query = search.trim().toLowerCase(java.util.Locale.ROOT);
+        if (query.equals(searchComputedFor)) return searchResults;
+        searchComputedFor = query;
+        searchResults.clear();
+        String[] words = query.split("\\s+");
+        for (GuiModule module : ModuleRegistry.all()) {
+            StringBuilder hay = new StringBuilder(module.name).append(' ').append(module.description)
+                    .append(' ').append(module.category);
+            for (Setting setting : module.settings()) hay.append(' ').append(setting.name);
+            String haystack = hay.toString().toLowerCase(java.util.Locale.ROOT);
+            boolean all = true;
+            for (String word : words) if (!haystack.contains(word)) { all = false; break; }
+            if (all) searchResults.add(module);
+        }
+        // Modules whose name matches come first, then alphabetical.
+        searchResults.sort(java.util.Comparator
+                .comparing((GuiModule m) -> !m.name.toLowerCase(java.util.Locale.ROOT).contains(words[0]))
+                .thenComparing(m -> m.name));
+        return searchResults;
+    }
+
+    private static String categoryIcon(String category) {
+        return switch (category) {
+            case "Combat" -> Icons.CROSSHAIRS;
+            case "Mining" -> Icons.GEM;
+            case "World" -> Icons.MAP_LOCATION_DOT;
+            case "Visuals" -> Icons.EYE;
+            case "Utility" -> Icons.SCREWDRIVER_WRENCH;
+            case "Client" -> Icons.SLIDERS;
+            default -> Icons.LAYER_GROUP;
+        };
     }
 
     private void chip(GuiGraphicsExtractor g, int x, int cy, int w, String s, int textCol) {
-        int h = u(18);
-        roundBorder(g, x, cy - h / 2, w, h, h / 2, S, Theme.LINE, 0xFF151521);
-        textC(g, x + w / 2, cy, s, textCol, false);
+        int h = u(22);
+        round(g, x, cy - h / 2, w, h, h / 2, 0x1CFFFFFF);
+        outline(g, x, cy - h / 2, w, h, h / 2, Math.max(1, S / 2), 0x30FFFFFF, 0x10FFFFFF);
+        circle(g, x + u(10), cy, u(3), textCol);
+        textC(g, x + w / 2 + u(5), cy, s, Theme.SUBTEXT, false);
     }
 
+    /** Glass pill button: lifts and catches light on hover, tints with its color while pressed. */
     private void button(GuiGraphicsExtractor g, int x, int y, int w, int h, String label, int hoverCol, Runnable action) {
         boolean hov = inside(mx, my, x, y, w, h);
-        if (hov) glow(g, x + w / 2, y + h / 2, w / 2 + u(6), hoverCol, 3, 8);
-        roundBorder(g, x, y, w, h, h / 2, S,
-                lerp(Theme.LINE, hoverCol, hov ? 0.85f : 0f),
-                lerp(0xFF161622, hoverCol, hov ? 0.16f : 0f));
-        textC(g, x + w / 2, y + h / 2, label, lerp(Theme.TEXT, hoverCol, hov ? 1f : 0f), false);
+        boolean down = hov && mouseDown();
+        if (hov && FANCY) roundFast(g, x - u(3), y - u(2), w + u(6), h + u(6), h / 2 + u(3), alpha(hoverCol, 0x18));
+        glass(g, x, y + (down ? S : 0), w, h, h / 2,
+                down ? alpha(hoverCol, 0x50) : hov ? alpha(0xFFFFFF, 0x26) : alpha(0xFFFFFF, 0x14), hov ? 1f : 0.4f);
+        textC(g, x + w / 2, y + h / 2 + (down ? S : 0), label, hov ? 0xFFFFFFFF : Theme.SUBTEXT, false);
         hit(x, y, w, h, false, b -> action.run(), null);
+    }
+
+    private void iconButton(GuiGraphicsExtractor g, int x, int y, int size, String glyph, int hoverCol, Runnable action) {
+        boolean hov = inside(mx, my, x, y, size, size);
+        glass(g, x, y, size, size, size / 2, hov ? alpha(hoverCol, 0x90) : alpha(0xFFFFFF, 0x14), hov ? 1f : 0.4f);
+        icon(g, x + size / 2, y + size / 2, glyph, hov ? 0xFFFFFFFF : Theme.SUBTEXT);
+        hit(x, y, size, size, false, b -> action.run(), null);
+    }
+
+    private static boolean mouseDown() {
+        return GLFW.glfwGetMouseButton(Minecraft.getInstance().getWindow().handle(), 0) == GLFW.GLFW_PRESS;
+    }
+
+    /** Critically-damped-ish spring step; returns the new value and updates velocity in v[0]. */
+    private static float spring(float value, float target, float[] v, int vi, float dt, float stiffness, float damping) {
+        float accel = (target - value) * stiffness - v[vi] * damping;
+        v[vi] += accel * dt;
+        return value + v[vi] * dt;
     }
 
     // =====================================================================
     //  sidebar
     // =====================================================================
+    private final float[] tabVel = new float[1];
+
     private void drawSidebar(GuiGraphicsExtractor g, int ix, int top, int bottom, int sideW, int accent, int accent2, float dt, long ms) {
         category = Math.max(0, Math.min(category, Math.max(0, cats.size() - 1)));
 
-        text(g, ix + u(16), top + u(16), "CATEGORIES", Theme.DIM, false);
+        int px = ix + u(12), pw = sideW - u(16), py = top + u(10), ph = bottom - top - u(20);
+        glass(g, px, py, pw, ph, u(18), 0x0CFFFFFF, 0.3f);
+        text(g, px + u(14), py + u(16), "Categories", Theme.DIM, true);
 
         int tabH = u(32), gap = u(4);
-        int x = ix + u(10), w = sideW - u(20) - S;
-        int y0 = top + u(34);
+        int x = px + u(6), w = pw - u(12);
+        int y0 = py + u(30);
 
-        // sliding highlight (with soft glow)
+        // the selection is a glass drop that springs between tabs (with a little overshoot)
+        boolean searching = searching();
         float target = y0 + category * (tabH + gap);
         if (tabY < 0) tabY = target;
-        tabY += (target - tabY) * Math.min(1f, dt * 16f);
+        tabY = spring(tabY, target, tabVel, 0, dt, 260f, 22f);
         int ty = Math.round(tabY);
-        if (FANCY) roundFast(g, x - u(2), ty - u(2), w + u(4), tabH + u(4), u(10), alpha(accent, 16));
-        round(g, x, ty, w, tabH, u(8), lerp(Theme.SIDE, accent, 0.16f));
-        vgrad(g, x, ty + u(8), u(3), tabH - u(16), accent, accent2);
+        float stretch = Math.min(1f, Math.abs(tabVel[0]) / (u(900)));
+        int dropH = tabH + Math.round(stretch * u(8));
+        if (!searching) {
+            if (FANCY) roundFast(g, x - u(2), ty - u(2) - (dropH - tabH) / 2, w + u(4), dropH + u(4), u(14), alpha(accent, 0x1C));
+            glassTint(g, x, ty - (dropH - tabH) / 2, w, dropH, tabH / 2, accent, 0.55f);
+        }
 
         for (int i = 0; i < cats.size(); i++) {
             int y = y0 + i * (tabH + gap);
-            boolean sel = i == category;
+            boolean sel = i == category && !searching;
             boolean hov = inside(mx, my, x, y, w, tabH);
-            if (!sel && hov) round(g, x, y, w, tabH, u(8), lerp(Theme.SIDE, accent, 0.07f));
+            if (!sel && hov) round(g, x, y, w, tabH, tabH / 2, 0x12FFFFFF);
 
-            int tx = x + u(14) + (hov && !sel ? u(2) : 0);
-            text(g, tx, y + tabH / 2, cats.get(i), sel ? Theme.TEXT : Theme.MUTED, sel);
-            textR(g, x + w - u(10), y + tabH / 2, catCountText[i], sel ? accent : Theme.DIM, false);
+            int tx = x + u(12) + (hov && !sel ? u(2) : 0);
+            icon(g, tx + u(6), y + tabH / 2, categoryIcon(cats.get(i)), sel ? 0xFFFFFFFF : hov ? Theme.SUBTEXT : Theme.MUTED);
+            tx += u(20);
+            text(g, tx, y + tabH / 2, cats.get(i), sel ? 0xFFFFFFFF : Theme.SUBTEXT, sel);
+            int countW = u(20), countH = u(16);
+            round(g, x + w - u(8) - countW, y + (tabH - countH) / 2, countW, countH, countH / 2, sel ? 0x30FFFFFF : 0x14FFFFFF);
+            textC(g, x + w - u(8) - countW / 2, y + tabH / 2, catCountText[i], sel ? 0xFFFFFFFF : Theme.MUTED, false);
 
             final int idx = i;
             hit(x, y, w, tabH, false, b -> {
@@ -605,10 +584,12 @@ public class AnthraxScreen extends Screen {
                 GuiPreferences.setLastCategory(cats.get(idx));
                 scrollTarget = 0;
                 scroll = 0;
+                search = "";
+                searchFocused = false;
             }, null);
         }
 
-        // status
+        // status: active modules, as a small glass gauge
         if (ms - activeStamp >= 200L) {
             activeStamp = ms;
             int count = 0, all = 0;
@@ -623,37 +604,28 @@ public class AnthraxScreen extends Screen {
         if (active != lastActive || total != lastTotal) {
             lastActive = active;
             lastTotal = total;
-            activeText = active + " / " + total + " ACTIVE";
+            activeText = active + " of " + total + " active";
         }
-        int cy = bottom - u(22);
-        int cx = ix + u(20);
-        if (active > 0) {
-            if (FANCY) {
-                // radar ping: a disc that expands and fades out, then repeats
-                float ph = (ms % 1500L) / 1500f;
-                circle(g, cx, cy, u(3) + Math.round(u(6) * ph), alpha(Theme.OK, Math.round(70 * (1f - ph))));
-            } else {
-                circle(g, cx, cy, u(6), alpha(Theme.OK, 40));
-            }
-            circle(g, cx, cy, u(3), Theme.OK);
-        } else {
-            circle(g, cx, cy, u(3), Theme.DIM);
+        int cy = py + ph - u(30);
+        int cx = px + u(16);
+        if (active > 0 && FANCY) {
+            float pulse = (ms % 1600L) / 1600f;
+            circle(g, cx, cy, u(3) + Math.round(u(6) * pulse), alpha(Theme.OK, Math.round(70 * (1f - pulse))));
         }
+        circle(g, cx, cy, u(3), active > 0 ? Theme.OK : Theme.DIM);
+        text(g, cx + u(10), cy, activeText, active > 0 ? Theme.SUBTEXT : Theme.MUTED, false);
 
-        // power bar: how much of the module list is on, with a glowing tip and a moving shine
-        int pbx = ix + u(14), pbw = sideW - u(30) - S, pbh = u(4), pby = cy + u(10);
+        int pbx = px + u(12), pbw = pw - u(24), pbh = u(5), pby = cy + u(12);
         float ratio = total > 0 ? active / (float) total : 0f;
         activeBar += (ratio - activeBar) * Math.min(1f, dt * 8f);
         if (Math.abs(ratio - activeBar) < 0.002f) activeBar = ratio;
-        round(g, pbx, pby, pbw, pbh, pbh / 2, 0xFF26263A);
+        round(g, pbx, pby, pbw, pbh, pbh / 2, 0x22FFFFFF);
         int pfw = Math.round(pbw * activeBar);
         if (pfw > 0) {
             pfw = Math.max(pbh, pfw);
             pillGrad(g, pbx, pby, pfw, pbh, accent, accent2);
-            shine(g, pbx, pfw, pby, pbh, pbx + Math.round((((ms / 1100f) % 1.5f) - 0.25f) * pfw), u(18), 0x90);
-            glow(g, pbx + pfw, pby + pbh / 2, u(8), accent2, 2, 14);
+            shine(g, pbx, pfw, pby, pbh, pbx + Math.round((((ms / 1300f) % 1.5f) - 0.25f) * pfw), u(20), 0x90);
         }
-        text(g, ix + u(34), cy, activeText, active > 0 ? Theme.OK : Theme.MUTED, false);
     }
 
     @Override
@@ -664,10 +636,12 @@ public class AnthraxScreen extends Screen {
 
     private void drawDetachedWindows(GuiGraphicsExtractor g, int pw, int ph, float dt, long ms, long nowNs,
                                      float open, int accent, int accent2) {
-        int barH = u(34), barW = u(300), barX = (pw - barW) / 2, barY = u(12);
-        roundBorder(g, barX, barY, barW, barH, barH / 2, S, Theme.LINE, 0xE010101D);
-        text(g, barX + u(14), barY + barH / 2, "CATEGORY WINDOWS", accent, true);
-        button(g, barX + barW - u(118), barY + u(6), u(108), barH - u(12), "TABBED VIEW", accent,
+        int barH = u(36), barW = u(320), barX = (pw - barW) / 2, barY = u(12);
+        shadow(g, barX, barY, barW, barH, barH / 2, u(10), 0x50);
+        glass(g, barX, barY, barW, barH, barH / 2, alpha(0x0E1119, 0xB4), 1f);
+        icon(g, barX + u(18), barY + barH / 2, Icons.TABLE_COLUMNS, accent);
+        text(g, barX + u(32), barY + barH / 2, "Category windows", Theme.TEXT, true);
+        button(g, barX + barW - u(118), barY + u(6), u(108), barH - u(12), "Tabbed view", accent,
                 () -> GuiPreferences.setSeparateCategoryWindows(false));
 
         if (cats.isEmpty()) return;
@@ -700,12 +674,12 @@ public class AnthraxScreen extends Screen {
                                     int headerH, int maxX, int maxY, float dt, long ms, long nowNs,
                                     int accent, int accent2) {
         List<GuiModule> mods = catMods.get(index);
-        roundFast(g, x - S, y - S + u(3), w + 2 * S, h + 2 * S, u(10), 0x88000000);
-        roundBorder(g, x, y, w, h, u(9), S, lerp(Theme.LINE, accent, .45f), Theme.BG);
-        round(g, x + S, y + S, w - 2 * S, headerH - S, u(8), Theme.HEADER, true, false);
-        fill(g, x + S, y + headerH, w - 2 * S, S, Theme.LINE);
-        text(g, x + u(12), y + headerH / 2, cat, Theme.TEXT, true);
-        textR(g, x + w - u(12), y + headerH / 2, moduleCountLabel(mods.size()), Theme.MUTED, false);
+        shadow(g, x, y, w, h, u(18), u(14), 0x60);
+        glass(g, x, y, w, h, u(18), alpha(0x0E1119, 0xB4), 1f);
+        fill(g, x + u(14), y + headerH, w - u(28), Math.max(1, S / 2), 0x16FFFFFF);
+        icon(g, x + u(16), y + headerH / 2, categoryIcon(cat), accent);
+        text(g, x + u(30), y + headerH / 2, cat, Theme.TEXT, true);
+        textR(g, x + w - u(14), y + headerH / 2, moduleCountLabel(mods.size()), Theme.MUTED, false);
 
         float dragOffsetX = mx - x, dragOffsetY = my - y;
         hit(x + S, y + S, w - 2 * S, headerH - S, false, null, (px, py) -> {
@@ -764,7 +738,7 @@ public class AnthraxScreen extends Screen {
         if (content > vh) {
             int barH = Math.max(u(20), Math.round(vh * (vh / content)));
             int barY = vy + Math.round((vh - barH) * (scroll / Math.max(1f, content - vh)));
-            round(g, vx + vw + u(2), barY, u(3), barH, u(1), alpha(accent, 0xB0));
+            round(g, vx + vw + u(2), barY, u(3), barH, u(2), 0x50FFFFFF);
         }
     }
 
@@ -774,15 +748,16 @@ public class AnthraxScreen extends Screen {
     private void drawContent(GuiGraphicsExtractor g, int ix, int iw, int top, int bottom,
                              int sideW, int accent, int accent2, float dt, long ms, long nowNs) {
         if (cats.isEmpty() || category >= catMods.size()) return;
-        String cat = cats.get(category);
-        List<GuiModule> mods = catMods.get(category);
+        boolean searching = searching();
+        String cat = searching ? "Search results" : cats.get(category);
+        List<GuiModule> mods = searching ? searchResults() : catMods.get(category);
 
-        vx = ix + sideW + u(14);
+        vx = ix + sideW + u(10);
         vw = iw - sideW - u(28);
-        vy = top + u(44);
+        vy = top + u(40);
         vh = bottom - vy - u(8);
 
-        text(g, vx, top + u(22), cat, Theme.TEXT, true);
+        text(g, vx + u(2), top + u(22), cat, Theme.TEXT, true);
         textR(g, vx + vw, top + u(22), moduleCountLabel(mods.size()), Theme.MUTED, false);
 
         float maxScroll = Math.max(0, contentHeight - vh);
@@ -802,7 +777,7 @@ public class AnthraxScreen extends Screen {
             st.expand += ((st.open ? 1f : 0f) - st.expand) * Math.min(1f, dt * 12f);
             if (Math.abs((st.open ? 1f : 0f) - st.expand) < 0.005f) st.expand = st.open ? 1f : 0f;
 
-            int hdr = u(52);
+            int hdr = u(54);
             int cardH = hdr + Math.round(settingsHeight(m) * st.expand);
 
             // staggered slide-in
@@ -817,28 +792,38 @@ public class AnthraxScreen extends Screen {
         }
         g.disableScissor();
         contentHeight = Math.max(0, total - gap);
+        if (mods.isEmpty() && searching) {
+            icon(g, vx + vw / 2, vy + u(40), Icons.MAGNIFYING_GLASS, Theme.DIM);
+            textC(g, vx + vw / 2, vy + u(62), "No modules match \"" + search.trim() + "\"", Theme.MUTED, false);
+        }
 
         if (contentHeight > vh) {
             int barH = Math.max(u(24), Math.round(vh * (vh / contentHeight)));
             int barY = vy + Math.round((vh - barH) * (scroll / Math.max(1f, contentHeight - vh)));
-            round(g, vx + vw + u(5), barY, u(3), barH, u(1), alpha(accent, 0xB0));
+            round(g, vx + vw + u(6), barY, u(3), barH, u(2), 0x50FFFFFF);
         }
     }
 
     private int rowHeight(Setting s) {
-        if (s instanceof Setting.Num) return u(38);
-        if (s instanceof Setting.Mode) return u(30);
-        if (s instanceof Setting.Text || s instanceof Setting.Action) return u(32);
-        return u(28);
+        if (s instanceof Setting.Num) return u(42);
+        if (s instanceof Setting.Mode || s instanceof Setting.Text || s instanceof Setting.Action) return u(34);
+        return u(30);
     }
 
     private int settingsHeight(GuiModule m) {
         List<Setting> list = m.settings();
         if (list.isEmpty()) return 0;
-        int h = u(8) + u(6);
+        int h = u(8) + u(6) + u(30);
         for (Setting s : list) h += rowHeight(s);
         return h;
     }
+
+    private static boolean allDefault(GuiModule m) {
+        for (Setting s : m.settings()) if (!s.isDefault()) return false;
+        return true;
+    }
+
+    private final float[] scratchVel = new float[1];
 
     private void drawCard(GuiGraphicsExtractor g, GuiModule m, CardState st, int x, int y, int w,
                           int hdr, int cardH, int accent, int accent2, float dt, long ms) {
@@ -846,43 +831,27 @@ public class AnthraxScreen extends Screen {
         if (st.initials == null) st.initials = initials(m.name);
         boolean hov = inside(mx, my, x, y, w, hdr) && inside(mx, my, vx, vy, vw, vh);
         st.hover += ((hov ? 1f : 0f) - st.hover) * Math.min(1f, dt * 14f);
-        st.enable += ((on ? 1f : 0f) - st.enable) * Math.min(1f, dt * 12f);
+        // the enable state springs, so the switch knob and glow overshoot slightly like liquid
+        scratchVel[0] = st.liftV;
+        st.enable = spring(st.enable, on ? 1f : 0f, scratchVel, 0, dt, 220f, 18f);
+        st.liftV = scratchVel[0];
+        float en = Math.max(0f, Math.min(1f, st.enable));
 
-        // outer glow while enabled
-        if (st.enable > 0.02f) {
-            roundFast(g, x - u(2), y - u(2), w + u(4), cardH + u(4), u(12), alpha(accent, (int) (14 * st.enable)));
-        }
-
-        int border = lerp(Theme.LINE, accent, 0.15f * st.hover + 0.45f * st.enable);
-        int fillCol = lerp(lerp(Theme.CARD, Theme.CARD_HOVER, st.hover), accent, 0.04f * st.enable);
-        roundBorder(g, x, y, w, cardH, u(10), S, border, fillCol);
+        if (en > 0.02f && FX >= 2) roundFast(g, x - u(3), y - u(2), w + u(6), cardH + u(6), u(18), alpha(accent, (int) (0x16 * en)));
+        int body = lerp(lerp(0x10FFFFFF, 0x1CFFFFFF, st.hover), alpha(accent, 0x2A), 0.55f * en);
+        glass(g, x, y, w, cardH, u(16), body, 0.35f + 0.45f * st.hover + 0.2f * en);
 
         if (FANCY && st.hover > 0.02f) {
-            // spotlight following the mouse; shineC clamps it to the header, so no scissor is needed
-            shineC(g, x + S, w - 2 * S, y + S, hdr - S, mx, u(90), (int) (0x22 * st.hover), accent);
+            // a lens of light under the cursor, confined to the header strip
+            shineC(g, x + u(10), w - u(20), y + S, hdr - 2 * S, mx, u(110), (int) (0x16 * st.hover), 0xFFFFFF);
         }
 
-        // enabled: vertical accent bar on the left edge
-        if (st.enable > 0.02f) {
-            int ba = (int) (0xE0 * st.enable);
-            vgrad(g, x + S, y + u(12), S + 1, hdr - u(24), alpha(accent, ba), alpha(accent2, ba));
-        }
-
-        // enabled accent line with moving shine
-        if (st.enable > 0.02f) {
-            int lx = x + u(14), lw = w - u(28), ly = y + hdr - u(3), lh = Math.max(1, S);
-            hgrad(g, lx, ly, lw, lh, alpha(accent, (int) (200 * st.enable)), alpha(accent2, (int) (200 * st.enable)));
-            float ph = (((ms + (m.name.hashCode() & 255) * 9L) / 1600f) % 1.5f) - 0.25f;
-            shine(g, lx, lw, ly, lh, lx + Math.round(ph * lw), u(46), (int) (0xC0 * st.enable));
-        }
-
-        // icon tile (glows when enabled)
-        int tile = u(30);
+        // icon tile: frosted square that fills with accent when enabled
+        int tile = u(32);
         int tx0 = x + u(12), ty0 = y + (hdr - tile) / 2;
-        if (FANCY && st.enable > 0.02f) {
-            roundFast(g, tx0 - u(3), ty0 - u(3), tile + u(6), tile + u(6), u(11), alpha(accent, (int) (24 * st.enable)));
-        }
-        round(g, tx0, ty0, tile, tile, u(8), lerp(Theme.CARD_HOVER, accent, 0.12f + 0.25f * st.enable));
+        if (FX >= 2 && en > 0.02f) glow(g, tx0 + tile / 2, ty0 + tile / 2, u(24), accent, 3, (int) (12 * en));
+        round(g, tx0, ty0, tile, tile, u(10), lerp(0x18FFFFFF, alpha(accent, 0x90), en));
+        if (FANCY) round(g, tx0 + S, ty0 + S, tile - 2 * S, tile / 2 - S, u(9), 0x18FFFFFF, true, false);
         if (!st.iconInit) {
             st.icon = moduleIcon(m.name);
             st.iconInit = true;
@@ -895,38 +864,77 @@ public class AnthraxScreen extends Screen {
             g.item(icon, -8, -8);
             g.pose().popMatrix();
         }
-        else textC(g, tx0 + tile / 2, ty0 + tile / 2, st.initials, lerp(Theme.MUTED, accent, st.enable), true);
+        else textC(g, tx0 + tile / 2, ty0 + tile / 2, st.initials, lerp(Theme.MUTED, 0xFFFFFFFF, en), true);
 
         // toggle
-        int tw = u(36), th = u(18);
+        int tw = u(40), th = u(22);
         int sx = x + w - u(14) - tw, sy = y + (hdr - th) / 2;
-        if (st.enable > 0.02f) glow(g, sx + tw / 2, sy + th / 2, u(26), accent, 3, (int) (10 * st.enable));
+        if (en > 0.02f && FX >= 2) glow(g, sx + tw / 2, sy + th / 2, u(24), accent, 3, (int) (10 * en));
         toggle(g, sx, sy, tw, th, st.enable, accent);
-        int nameX = x + u(52);
-        text(g, nameX, y + u(19), fitText(m.name, Math.max(0, sx - u(8) - nameX), true), Theme.TEXT, true);
-        if (w >= u(320)) text(g, nameX, y + u(35), fitText(m.description, Math.max(0, sx - u(8) - nameX), false), Theme.MUTED, false);
 
         List<Setting> moduleSettings = m.settings();
         if (!moduleSettings.isEmpty()) {
-            chevron(g, sx - u(24), y + hdr / 2, u(4), st.open, lerp(Theme.MUTED, accent, st.hover));
+            int ccx = sx - u(22);
+            if (st.hover > 0.05f) circle(g, ccx, y + hdr / 2, u(11), alpha(0xFFFFFF, (int) (0x18 * st.hover)));
+            chevron(g, ccx, y + hdr / 2, u(4), st.open, lerp(Theme.MUTED, 0xFFFFFFFF, st.hover));
+        }
+
+        // keybind chip: always shown when bound or listening, otherwise only on hover
+        boolean listening = binding == m;
+        int bh = u(18), by = y + (hdr - bh) / 2;
+        String bindLabel = listening ? "PRESS A KEY" : m.hasKey() ? Keybinds.keyName(m.key()) : "BIND";
+        int bw = Math.max(u(34), textWidth(bindLabel, false) + u(16));
+        int bx = (moduleSettings.isEmpty() ? sx - u(10) : sx - u(40)) - bw;
+        boolean bindHov = inside(mx, my, bx, by, bw, bh) && inside(mx, my, vx, vy, vw, vh);
+        boolean showBind = listening || m.hasKey() || st.hover > 0.05f;
+        if (showBind) {
+            float pulse = listening ? 0.55f + 0.45f * (float) Math.sin(ms / 140.0) : 0f;
+            round(g, bx, by, bw, bh, bh / 2, listening ? alpha(accent, (int) (0x30 + 0x40 * pulse)) : bindHov ? 0x28FFFFFF : 0x16FFFFFF);
+            outline(g, bx, by, bw, bh, bh / 2, Math.max(1, S / 2), listening ? alpha(accent, 0xE0) : 0x30FFFFFF, listening ? alpha(accent, 0x80) : 0x10FFFFFF);
+            int labelCol = listening ? accent : m.hasKey() ? (bindHov ? Theme.TEXT : Theme.SUBTEXT) : (bindHov ? Theme.SUBTEXT : Theme.DIM);
+            textC(g, bx + bw / 2, by + bh / 2, bindLabel, labelCol, false);
+        }
+
+        int nameX = x + u(52);
+        int nameMax = Math.max(0, (showBind ? bx : moduleSettings.isEmpty() ? sx : sx - u(36)) - u(8) - nameX);
+        boolean showDescription = w >= u(320);
+        text(g, nameX, y + (showDescription ? u(19) : hdr / 2), fitText(m.name, nameMax, true), Theme.TEXT, true);
+        if (showDescription) text(g, nameX, y + u(35), fitText(m.description, nameMax, false), Theme.MUTED, false);
+
+        // hover tooltips: the bind chip explains itself; narrow cards show their description
+        if (hov) {
+            if (hoverModule != m) { hoverModule = m; hoverSince = System.currentTimeMillis(); }
+            boolean settled = System.currentTimeMillis() - hoverSince > 450;
+            if (bindHov && showBind) setTooltip(listening ? "Press a key. Esc cancels, Backspace unbinds." : "Click to set a toggle key");
+            else if (settled && !showDescription) setTooltip(m.description);
+        } else if (hoverModule == m) {
+            hoverModule = null;
         }
 
         hit(x, y, w, hdr, true, b -> {
             if (b == 1 && !moduleSettings.isEmpty()) st.open = !st.open;
+            else if (b == 2) binding = m;
             else if (b == 0) {
                 m.toggle();
                 activeStamp = -1000L;
-                toast("MODULE", m.name + (m.isEnabled() ? " enabled" : " disabled"), false);
+                if (m.isEnabled()) Notifications.success(m.name, "Enabled");
+                else Notifications.info(m.name, "Disabled");
             }
         }, null);
         if (!moduleSettings.isEmpty()) {
-            hit(sx - u(44), y, u(40), hdr, true, b -> st.open = !st.open, null);
+            hit(sx - u(36), y, u(32), hdr, true, b -> st.open = !st.open, null);
+        }
+        if (showBind) {
+            hit(bx, by, bw, bh, true, b -> {
+                if (b == 1 || b == 2) { m.setKey(GuiModule.NO_KEY); binding = null; }
+                else binding = bindingBeforeClick == m ? null : m;
+            }, null);
         }
 
         if (st.expand > 0.01f && !moduleSettings.isEmpty()) {
             boolean clip = st.expand < 0.999f;
             if (clip) g.enableScissor(x + S, y + hdr, x + w - S, y + cardH - S);
-            fill(g, x + u(12), y + hdr, w - u(24), S, Theme.LINE);
+            fill(g, x + u(14), y + hdr, w - u(28), Math.max(1, S / 2), 0x18FFFFFF);
             boolean interactive = st.expand > 0.9f;
             int ry = y + hdr + u(8);
             for (Setting s : moduleSettings) {
@@ -934,66 +942,196 @@ public class AnthraxScreen extends Screen {
                 drawSetting(g, s, x, ry, w, rh, accent, accent2, interactive, ms);
                 ry += rh;
             }
+            drawCardFooter(g, m, x, ry, w, accent, interactive);
             if (clip) g.disableScissor();
         }
     }
 
+    /** Keybind summary and a reset-all button under a module's settings. */
+    private void drawCardFooter(GuiGraphicsExtractor g, GuiModule m, int x, int y, int w, int accent, boolean interactive) {
+        int pad = u(14), rh = u(30), cy = y + rh / 2 + u(2);
+        fill(g, x + u(14), y + u(2), w - u(28), Math.max(1, S / 2), 0x10FFFFFF);
+        icon(g, x + pad + u(5), cy, Icons.KEYBOARD, Theme.DIM);
+        text(g, x + pad + u(16), cy, m.hasKey() ? "Toggle key  " + Keybinds.keyName(m.key()) : "No toggle key  (middle-click to bind)",
+                Theme.DIM, false);
+        boolean dirty = !allDefault(m);
+        int bw = u(74), bh = u(18), bx = x + w - pad - bw, by = cy - bh / 2;
+        boolean hov = interactive && dirty && inside(mx, my, bx, by, bw, bh) && inside(mx, my, vx, vy, vw, vh);
+        glass(g, bx, by, bw, bh, bh / 2, hov ? alpha(Theme.DANGER, 0x60) : 0x12FFFFFF, hov ? 0.9f : 0.3f);
+        icon(g, bx + u(12), cy, Icons.ROTATE_LEFT, dirty ? (hov ? Theme.DANGER : Theme.MUTED) : Theme.DIM);
+        text(g, bx + u(22), cy, "Reset all", dirty ? (hov ? Theme.TEXT : Theme.SUBTEXT) : Theme.DIM, false);
+        if (interactive && dirty) hit(bx, by, bw, bh, true, b -> {
+            ModuleConfig.resetModule(m);
+            Notifications.info(m.name, "Settings reset to defaults");
+        }, null);
+    }
+
+    /** Small reset glyph drawn after a label when the hovered setting differs from its default. */
+    private void resetGlyph(GuiGraphicsExtractor g, Setting s, int labelEndX, int cy, int rowX, int rowY, int rowW, int rowH,
+                            boolean interactive) {
+        if (!interactive || s.isDefault() || !inside(mx, my, rowX, rowY, rowW, rowH) || !inside(mx, my, vx, vy, vw, vh)) return;
+        int cx = labelEndX + u(9), size = u(14);
+        boolean hov = inside(mx, my, cx - size / 2, cy - size / 2, size, size);
+        icon(g, cx, cy, Icons.ROTATE_LEFT, hov ? Theme.DANGER : Theme.DIM);
+        if (hov) setTooltip("Reset to default");
+        hit(cx - size / 2, cy - size / 2, size, size, true, b -> s.reset(), null);
+    }
+
+    private float[] anim(Setting s) {
+        return settingAnim.computeIfAbsent(s, k -> new float[]{Float.NaN, 0f, 0f});
+    }
+
     private void drawSetting(GuiGraphicsExtractor g, Setting s, int x, int y, int w, int rh,
                              int accent, int accent2, boolean interactive, long ms) {
-        int pad = u(14);
+        int pad = u(16);
         int lx = x + pad, rx = x + w - pad;
+        float dt = Math.min(0.05f, 1f / Math.max(30, fps));
+        float[] a = anim(s);
+        boolean rowHov = interactive && inside(mx, my, x + u(6), y, w - u(12), rh) && inside(mx, my, vx, vy, vw, vh);
+        a[1] += ((rowHov ? 1f : 0f) - a[1]) * Math.min(1f, dt * 14f);
+        if (a[1] > 0.02f) round(g, x + u(8), y + S, w - u(16), rh - 2 * S, u(10), alpha(0xFFFFFF, (int) (0x0C * a[1])));
 
         if (s instanceof Setting.Bool b) {
-            int tw = u(30), th = u(16);
-            text(g, lx, y + rh / 2, fitText(b.name, Math.max(0, rx - tw - u(8) - lx), false), Theme.SUBTEXT, false);
-            toggle(g, rx - tw, y + (rh - th) / 2, tw, th, b.get() ? 1f : 0f, accent);
-            if (interactive) hit(x, y, w, rh, true, btn -> b.toggle(), null);
+            int tw = u(34), th = u(19);
+            if (Float.isNaN(a[0])) a[0] = b.get() ? 1f : 0f;
+            a[0] = spring(a[0], b.get() ? 1f : 0f, a, 2, dt, 240f, 19f);
+            String label = fitText(b.name, Math.max(0, rx - tw - u(28) - lx), false);
+            text(g, lx, y + rh / 2, label, Theme.SUBTEXT, false);
+            toggle(g, rx - tw, y + (rh - th) / 2, tw, th, a[0], accent);
+            if (interactive) hit(x, y, w, rh, true, btn -> { if (btn == 2) b.reset(); else b.toggle(); }, null);
+            resetGlyph(g, s, lx + textWidth(label, false), y + rh / 2, x, y, w, rh, interactive);
 
         } else if (s instanceof Setting.Mode md) {
-            int bw = u(96), bh = u(20), bx = rx - bw, by = y + (rh - bh) / 2;
-            text(g, lx, y + rh / 2, fitText(md.name, Math.max(0, bx - u(8) - lx), false), Theme.SUBTEXT, false);
-            boolean hov = interactive && inside(mx, my, bx, by, bw, bh) && inside(mx, my, vx, vy, vw, vh);
-            roundBorder(g, bx, by, bw, bh, bh / 2, S, lerp(Theme.LINE, accent, hov ? 0.8f : 0f), 0xFF1B1B2B);
-            textC(g, bx + bw / 2, by + bh / 2, md.get(), accent, false);
-            textC(g, bx + u(9), by + bh / 2, "<", hov ? accent : Theme.DIM, false);
-            textC(g, bx + bw - u(9), by + bh / 2, ">", hov ? accent : Theme.DIM, false);
-            if (interactive) hit(bx, by, bw, bh, true, btn -> md.cycle(btn == 1 ? -1 : 1), null);
+            List<String> options = md.options;
+            int segH = u(22), segPad = u(10);
+            int segW = 0;
+            for (String o : options) segW += textWidth(o, false) + segPad * 2;
+            int maxSeg = (w - pad * 2) * 3 / 5;
+            int labelMax;
+            if (options.size() <= 4 && segW <= maxSeg) {
+                // segmented control with a sliding glass thumb
+                int bx = rx - segW, by = y + (rh - segH) / 2;
+                labelMax = Math.max(0, bx - u(28) - lx);
+                round(g, bx, by, segW, segH, segH / 2, 0x30000000);
+                outline(g, bx, by, segW, segH, segH / 2, Math.max(1, S / 2), 0x14FFFFFF, 0x22FFFFFF);
+                int sel = Math.max(0, options.indexOf(md.get()));
+                int selX = bx, cx = bx;
+                int[] xs = new int[options.size()], ws = new int[options.size()];
+                for (int i = 0; i < options.size(); i++) {
+                    ws[i] = textWidth(options.get(i), false) + segPad * 2;
+                    xs[i] = cx;
+                    cx += ws[i];
+                }
+                selX = xs[sel];
+                if (Float.isNaN(a[0])) a[0] = selX - bx;
+                a[0] = spring(a[0], selX - bx, a, 2, dt, 300f, 24f);
+                int thumbX = bx + Math.round(a[0]);
+                int thumbW = ws[sel];
+                glassTint(g, thumbX + S, by + S, thumbW - 2 * S, segH - 2 * S, (segH - 2 * S) / 2, accent, 0.65f);
+                for (int i = 0; i < options.size(); i++) {
+                    boolean isSel = i == sel;
+                    boolean oh = interactive && inside(mx, my, xs[i], by, ws[i], segH) && inside(mx, my, vx, vy, vw, vh);
+                    textC(g, xs[i] + ws[i] / 2, by + segH / 2, options.get(i), isSel ? 0xFFFFFFFF : oh ? Theme.TEXT : Theme.MUTED, isSel);
+                    final String option = options.get(i);
+                    if (interactive) hit(xs[i], by, ws[i], segH, true, btn -> { if (btn == 2) md.reset(); else md.set(option); }, null);
+                }
+            } else {
+                int bw = Math.max(u(100), Math.min(u(150), maxOptionWidth(md) + u(40))), bh = segH, bx = rx - bw, by = y + (rh - bh) / 2;
+                labelMax = Math.max(0, bx - u(28) - lx);
+                boolean hov = interactive && inside(mx, my, bx, by, bw, bh) && inside(mx, my, vx, vy, vw, vh);
+                glass(g, bx, by, bw, bh, bh / 2, hov ? 0x26FFFFFF : 0x16FFFFFF, hov ? 0.9f : 0.4f);
+                textC(g, bx + bw / 2, by + bh / 2, fitText(md.get(), bw - u(36), false), 0xFFFFFFFF, false);
+                icon(g, bx + u(11), by + bh / 2, Icons.ANGLE_LEFT, hov ? accent : Theme.MUTED);
+                icon(g, bx + bw - u(11), by + bh / 2, Icons.ANGLE_RIGHT, hov ? accent : Theme.MUTED);
+                if (interactive) hit(bx, by, bw, bh, true, btn -> {
+                    if (btn == 2) md.reset();
+                    else md.cycle(btn == 1 || mx < bx + bw / 3 ? -1 : 1);
+                }, null);
+            }
+            String label = fitText(md.name, labelMax, false);
+            text(g, lx, y + rh / 2, label, Theme.SUBTEXT, false);
+            resetGlyph(g, s, lx + textWidth(label, false), y + rh / 2, x, y, w, rh, interactive);
 
         } else if (s instanceof Setting.Num n) {
             String shown = n.display();
-            text(g, lx, y + u(12), fitText(n.name, Math.max(0, rx - textWidth(shown, true) - u(12) - lx), false), Theme.SUBTEXT, false);
-            textR(g, rx, y + u(12), shown, accent, true);
+            String label = fitText(n.name, Math.max(0, rx - textWidth(shown, true) - u(40) - lx), false);
+            text(g, lx, y + u(12), label, Theme.SUBTEXT, false);
+            int valW = textWidth(shown, true) + u(14), valH = u(18);
+            round(g, rx - valW, y + u(12) - valH / 2, valW, valH, valH / 2, 0x1CFFFFFF);
+            textC(g, rx - valW / 2, y + u(12), shown, 0xFFFFFFFF, true);
 
-            int trackX = lx, trackW = rx - lx, trackH = u(6), trackY = y + u(22);
-            round(g, trackX, trackY, trackW, trackH, trackH / 2, 0xFF26263A);
-            int fw = Math.max(trackH, Math.round(trackW * (float) n.fraction()));
+            int trackX = lx, trackW = rx - lx, trackH = u(5), trackY = y + u(27);
+            float frac = (float) n.fraction();
+            if (Float.isNaN(a[0])) a[0] = frac;
+            a[0] = spring(a[0], frac, a, 2, dt, 420f, 32f);
+            float shownFrac = Math.max(0f, Math.min(1f, a[0]));
+            round(g, trackX, trackY, trackW, trackH, trackH / 2, 0x26FFFFFF);
+            int fw = Math.max(trackH, Math.round(trackW * shownFrac));
             pillGrad(g, trackX, trackY, fw, trackH, accent, accent2);
-            if (FX >= 2) {
-                shine(g, trackX, fw, trackY, trackH, trackX + Math.round(((ms / 1200f) % 1.4f - 0.2f) * fw), u(24), 0x60);
+            boolean dragging = draggingSlider == n && activeDrag != null;
+            int kx = trackX + Math.round(trackW * shownFrac), ky = trackY + trackH / 2;
+            boolean knobHot = dragging || (interactive && inside(mx, my, trackX - u(8), trackY - u(10), trackW + u(16), u(26))
+                    && inside(mx, my, vx, vy, vw, vh));
+            int kw = knobHot ? u(22) : u(18), kh = knobHot ? u(16) : u(14);
+            if (FANCY) roundFast(g, kx - kw / 2 - S, ky - kh / 2 + S, kw + 2 * S, kh + S, kh / 2, 0x40000000);
+            if (FANCY && knobHot) glow(g, kx, ky, u(16), accent, 3, 12);
+            round(g, kx - kw / 2, ky - kh / 2, kw, kh, kh / 2, 0xFFFFFFFF);
+            round(g, kx - kw / 2 + S, ky, kw - 2 * S, kh / 2 - S, kh / 2, 0x16000000, false, true);
+            if (dragging) {
+                // value bubble floating above the knob while dragging
+                int bw = textWidth(shown, true) + u(16), bh = u(20);
+                int bxx = Math.max(x + S, Math.min(x + w - bw - S, kx - bw / 2)), byy = ky - kh / 2 - bh - u(5);
+                glassTint(g, bxx, byy, bw, bh, bh / 2, accent, 0.8f);
+                textC(g, bxx + bw / 2, byy + bh / 2, shown, 0xFFFFFFFF, true);
             }
-            int kx = trackX + Math.round(trackW * (float) n.fraction()), ky = trackY + trackH / 2;
-            glow(g, kx, ky, u(12), accent, 4, 14);
-            circle(g, kx, ky, u(7), alpha(accent, 0x90));
-            circle(g, kx, ky, u(5), 0xFFFFFFFF);
 
             if (interactive) {
-                hit(trackX - u(8), trackY - u(9), trackW + u(16), u(24), true, btn -> {},
-                        (px, py) -> n.setFraction((px - trackX) / (double) trackW));
+                hit(trackX - u(8), trackY - u(10), trackW + u(16), u(26), true, btn -> {
+                    if (btn == 2) n.reset();
+                    else if (btn == 0) draggingSlider = n;
+                }, (px, py) -> n.setFraction((px - trackX) / (double) trackW));
+                if (rowHov) hoveredSlider = n;
+                if (knobHot && !dragging) setTooltip("Drag, or hold Shift and scroll for exact steps");
             }
+            resetGlyph(g, s, lx + textWidth(label, false), y + u(12), x, y, w, rh, interactive);
         } else if (s instanceof Setting.Text field) {
-            int bw = Math.min(u(132), Math.max(u(72), (w - u(42)) / 2)), bh = u(21), bx = rx - bw, by = y + (rh - bh) / 2;
-            text(g, lx, y + rh / 2, fitText(field.name, Math.max(0, bx - u(8) - lx), false), Theme.SUBTEXT, false);
+            int bw = Math.min(u(160), Math.max(u(80), (w - u(42)) / 2)), bh = u(23), bx = rx - bw, by = y + (rh - bh) / 2;
+            String label = fitText(field.name, Math.max(0, bx - u(28) - lx), false);
+            text(g, lx, y + rh / 2, label, Theme.SUBTEXT, false);
             boolean focused = focusedText == field;
-            roundBorder(g, bx, by, bw, bh, bh / 2, S, lerp(Theme.LINE, accent, focused ? 0.9f : 0f), 0xFF171725);
+            boolean fieldHov = interactive && inside(mx, my, bx, by, bw, bh) && inside(mx, my, vx, vy, vw, vh);
+            if (focused && FANCY) roundFast(g, bx - u(3), by - u(3), bw + u(6), bh + u(6), bh / 2 + u(3), alpha(accent, 0x1C));
+            round(g, bx, by, bw, bh, u(9), focused ? 0x50000000 : 0x34000000);
+            outline(g, bx, by, bw, bh, u(9), Math.max(1, S / 2),
+                    focused ? alpha(accent, 0xE0) : fieldHov ? 0x2AFFFFFF : 0x12FFFFFF,
+                    focused ? alpha(accent, 0x90) : fieldHov ? 0x3AFFFFFF : 0x22FFFFFF);
             String value = field.get();
-            String visible = value.length() > 18 ? value.substring(value.length() - 18) : value;
-            text(g, bx + u(7), by + bh / 2, visible + (focused && (System.currentTimeMillis() / 500 % 2 == 0) ? "|" : ""), focused ? accent : Theme.SUBTEXT, false);
-            if (interactive) hit(bx, by, bw, bh, true, btn -> focusedText = field, null);
+            int innerW = bw - u(18);
+            if (focused && selectAllText && !value.isEmpty()) {
+                String shownSel = fitTail(value, innerW);
+                fill(g, bx + u(8), by + u(5), textWidth(shownSel, false) + S, bh - u(10), alpha(accent, 0x60));
+            }
+            if (value.isEmpty() && !focused) {
+                text(g, bx + u(9), by + bh / 2, "Click to type", Theme.DIM, false);
+            } else {
+                String visible = fitTail(value, innerW);
+                text(g, bx + u(9), by + bh / 2, visible, focused ? 0xFFFFFFFF : Theme.SUBTEXT, false);
+                if (focused && (System.currentTimeMillis() / 500 % 2 == 0))
+                    fill(g, bx + u(9) + textWidth(visible, false) + S, by + bh / 2 - u(7), S, u(14), accent);
+            }
+            if (interactive) hit(bx, by, bw, bh, true, btn -> {
+                if (btn == 2) field.reset();
+                else { focusedText = field; searchFocused = false; }
+            }, null);
+            resetGlyph(g, s, lx + textWidth(label, false), y + rh / 2, x, y, w, rh, interactive);
         } else if (s instanceof Setting.Action action) {
-            int bw = Math.min(u(132), w - u(28)), bh = u(22), bx = rx - bw, by = y + (rh - bh) / 2;
+            int bw = Math.min(Math.max(u(136), textWidth(action.name, false) + u(30)), w - u(32)), bh = u(24), bx = rx - bw, by = y + (rh - bh) / 2;
             boolean hov = interactive && inside(mx, my, bx, by, bw, bh) && inside(mx, my, vx, vy, vw, vh);
-            roundBorder(g, bx, by, bw, bh, bh / 2, S, lerp(Theme.LINE, accent, hov ? 0.9f : 0.3f), lerp(Theme.CARD, accent, hov ? .18f : .08f));
-            textC(g, bx + bw / 2, by + bh / 2, action.name, Theme.TEXT, false);
+            boolean pressed = hov && activeDrag == null && mouseDown();
+            int ay = by + (pressed ? S : 0);
+            if (hov && FANCY) roundFast(g, bx - u(3), ay - u(2), bw + u(6), bh + u(6), bh / 2 + u(3), alpha(accent, 0x22));
+            glassTint(g, bx, ay, bw, bh, bh / 2, accent, pressed ? 1f : hov ? 0.7f : 0.25f);
+            textC(g, bx + bw / 2, ay + bh / 2, fitText(action.name, bw - u(16), false), 0xFFFFFFFF, hov);
             if (interactive) hit(bx, by, bw, bh, true, btn -> action.run(), null);
         }
     }
@@ -1002,42 +1140,64 @@ public class AnthraxScreen extends Screen {
     //  footer + toasts
     // =====================================================================
     private void drawFooter(GuiGraphicsExtractor g, int ix, int iw, int footTop, int footH) {
-        int cy = footTop + footH / 2 + S;
-        text(g, ix + u(16), cy, "ANTHRAX  /  PERSONAL CONFIGURATION", Theme.DIM, false);
-        text(g, ix + u(226), cy, costText, Theme.DIM, false);
-        int buttonX = ix + iw - u(112), buttonY = cy - u(9);
-        textR(g, buttonX - u(8), cy, "DRAG TO MOVE", Theme.MUTED, false);
-        button(g, buttonX, buttonY, u(96), u(18), "WINDOWS", Theme.accent(),
+        int cy = footTop + footH / 2;
+        int x = ix + u(22);
+        x = hint(g, x, cy, "LMB", "toggle");
+        x = hint(g, x, cy, "RMB", "settings");
+        x = hint(g, x, cy, "MMB", "bind");
+        hint(g, x, cy, "Type", "search");
+        int buttonX = ix + iw - u(118), buttonY = cy - u(10);
+        textR(g, buttonX - u(12), cy, costText + "   " + clockText, Theme.MUTED, false);
+        button(g, buttonX, buttonY, u(100), u(20), "Windows", Theme.accent(),
                 () -> GuiPreferences.setSeparateCategoryWindows(true));
     }
 
-    private void toast(String title, String msg, boolean err) {
-        toasts.add(new Toast(title, msg, err, System.currentTimeMillis()));
-        if (toasts.size() > 4) toasts.remove(0);
+    /** A keycap-style hint, returns the x after it. */
+    private int hint(GuiGraphicsExtractor g, int x, int cy, String key, String what) {
+        int kw = textWidth(key, true) + u(10), kh = u(16);
+        round(g, x, cy - kh / 2, kw, kh, u(5), 0x1CFFFFFF);
+        textC(g, x + kw / 2, cy, key, Theme.SUBTEXT, true);
+        text(g, x + kw + u(5), cy, what, Theme.MUTED, false);
+        return x + kw + u(5) + textWidth(what, false) + u(14);
     }
 
-    private void drawToasts(GuiGraphicsExtractor g, int pw, int ph, int accent) {
-        long now = System.currentTimeMillis();
-        toasts.removeIf(t -> now - t.born() > 3300);
-        int w = u(230), h = u(46), gap = u(8);
-        int yb = ph - u(18);
-        for (int i = toasts.size() - 1; i >= 0; i--) {
-            Toast t = toasts.get(i);
-            float age = (now - t.born()) / 1000f;
-            float slide = (1f - easeOut(age / 0.3f)) + easeOut((age - 2.9f) / 0.35f);
-            int x = pw - u(18) - w + Math.round(slide * (w + u(30)));
-            int y = yb - h;
-            yb -= h + gap;
-            int col = t.err() ? Theme.DANGER : accent;
+    private void toast(String title, String msg, boolean err) {
+        if (err) Notifications.error(title, msg);
+        else Notifications.info(title, msg);
+    }
 
-            glow(g, x + w / 2, y + h / 2, w / 2 + u(10), col, 3, 6);
-            roundBorder(g, x, y, w, h, u(8), S, lerp(Theme.LINE, col, 0.5f), 0xFF0E0E16);
-            round(g, x + u(1), y + u(9), u(3), h - u(18), u(1), col);
-            text(g, x + u(16), y + u(14), t.title(), col, true);
-            text(g, x + u(16), y + u(30), t.msg(), Theme.TEXT, false);
-            float prog = 1f - Math.min(1f, age / 3.0f);
-            round(g, x + u(8), y + h - u(6), Math.round((w - u(16)) * prog), u(2), u(1), col);
-        }
+    private void setTooltip(String text) {
+        if (text == null || text.isBlank()) return;
+        tooltip = text;
+        tooltipX = mx;
+        tooltipY = my;
+    }
+
+    private void drawTooltip(GuiGraphicsExtractor g, int pw, int ph, int accent) {
+        if (tooltip == null) return;
+        String shown = fitText(tooltip, u(300), false);
+        int w = textWidth(shown, false) + u(20), h = u(24);
+        int x = Math.min(pw - w - u(4), tooltipX + u(12));
+        int y = tooltipY + u(16);
+        if (y + h > ph - u(4)) y = tooltipY - h - u(8);
+        shadow(g, x, y, w, h, h / 2, u(8), 0x60);
+        glass(g, x, y, w, h, h / 2, alpha(0x14161F, 0xE6), 1f);
+        text(g, x + u(10), y + h / 2, shown, Theme.TEXT, false);
+    }
+
+    private int maxOptionWidth(Setting.Mode mode) {
+        int max = 0;
+        for (String option : mode.options) max = Math.max(max, textWidth(option, false));
+        return max;
+    }
+
+    /** Longest suffix of value that fits maxWidth (text fields show the end being typed). */
+    private static String fitTail(String value, int maxWidth) {
+        if (value == null || value.isEmpty() || maxWidth <= 0) return "";
+        if (textWidth(value, false) <= maxWidth) return value;
+        int start = 0;
+        while (start < value.length() && textWidth(value.substring(start), false) > maxWidth) start++;
+        return value.substring(start);
     }
 
     private String moduleCountLabel(int count) {
@@ -1082,13 +1242,16 @@ public class AnthraxScreen extends Screen {
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         focusedText = null;
         selectAllText = false;
+        searchFocused = false;
+        bindingBeforeClick = binding;
+        binding = null;
         int px = Math.round((float) event.x() * gs / uiOverride), py = Math.round((float) event.y() * gs / uiOverride);
         int button = event.button();
         for (int i = hitCount - 1; i >= 0; i--) {
             Hit h = hits.get(i);
             if (!h.contains(px, py)) continue;
             if (h.clipped && !inside(px, py, h.clipX, h.clipY, h.clipW, h.clipH)) continue;
-            if (h.drag != null) {
+            if (h.drag != null && button == 0) {
                 activeDrag = h.drag;
                 activeDrag.to(px, py);
             }
@@ -1100,7 +1263,18 @@ public class AnthraxScreen extends Screen {
 
     @Override
     public boolean charTyped(CharacterEvent event) {
-        if (focusedText == null || !event.isAllowedChatCharacter()) return super.charTyped(event);
+        if (swallowNextChar) { swallowNextChar = false; return true; }
+        if (binding != null) return true;
+        if (focusedText == null) {
+            // Typing anywhere searches, like a command palette.
+            if (GuiPreferences.separateCategoryWindows() || !event.isAllowedChatCharacter()) return super.charTyped(event);
+            if (!searchFocused && Character.isWhitespace(event.codepoint())) return super.charTyped(event);
+            searchFocused = true;
+            if (search.length() < 48) search += event.codepointAsString();
+            scrollTarget = 0;
+            return true;
+        }
+        if (!event.isAllowedChatCharacter()) return super.charTyped(event);
         String value = selectAllText ? "" : focusedText.get();
         selectAllText = false;
         if (value.length() < focusedText.maxLength) focusedText.set(value + event.codepointAsString());
@@ -1109,13 +1283,29 @@ public class AnthraxScreen extends Screen {
 
     @Override
     public boolean keyPressed(KeyEvent event) {
+        swallowNextChar = false;
+        int key = event.key();
+        boolean control = (event.modifiers() & GLFW.GLFW_MOD_CONTROL) != 0;
+        if (binding != null) {
+            GuiModule module = binding;
+            binding = null;
+            if (key == GLFW.GLFW_KEY_ESCAPE) return true;
+            if (key == GLFW.GLFW_KEY_BACKSPACE || key == GLFW.GLFW_KEY_DELETE) {
+                module.setKey(GuiModule.NO_KEY);
+                Notifications.info(module.name, "Keybind cleared");
+            } else {
+                module.setKey(key);
+                Notifications.success(module.name, "Bound to " + Keybinds.keyName(key));
+            }
+            swallowNextChar = true;
+            return true;
+        }
         if (focusedText != null) {
-            boolean control = (event.modifiers() & GLFW.GLFW_MOD_CONTROL) != 0;
-            if (control && event.key() == GLFW.GLFW_KEY_A) {
+            if (control && key == GLFW.GLFW_KEY_A) {
                 selectAllText = true;
                 return true;
             }
-            if (control && event.key() == GLFW.GLFW_KEY_V) {
+            if (control && key == GLFW.GLFW_KEY_V) {
                 String clipboard = Minecraft.getInstance().keyboardHandler.getClipboard();
                 if (clipboard != null) {
                     clipboard = clipboard.replace('\r', ' ').replace('\n', ' ').replace('\t', ' ');
@@ -1126,26 +1316,64 @@ public class AnthraxScreen extends Screen {
                 selectAllText = false;
                 return true;
             }
-            if (control && (event.key() == GLFW.GLFW_KEY_C || event.key() == GLFW.GLFW_KEY_X)) {
+            if (control && (key == GLFW.GLFW_KEY_C || key == GLFW.GLFW_KEY_X)) {
                 if (selectAllText) {
                     Minecraft.getInstance().keyboardHandler.setClipboard(focusedText.get());
-                    if (event.key() == GLFW.GLFW_KEY_X) focusedText.set("");
+                    if (key == GLFW.GLFW_KEY_X) focusedText.set("");
                     selectAllText = false;
                 }
                 return true;
             }
-            if (event.key() == GLFW.GLFW_KEY_BACKSPACE) {
+            if (key == GLFW.GLFW_KEY_BACKSPACE) {
                 String value = focusedText.get();
-                if (selectAllText) focusedText.set("");
+                if (selectAllText || control) focusedText.set("");
                 else if (!value.isEmpty()) focusedText.set(value.substring(0, value.length() - 1));
                 selectAllText = false;
                 return true;
             }
-            if (event.key() == GLFW.GLFW_KEY_ENTER || event.key() == GLFW.GLFW_KEY_ESCAPE) {
+            if (key == GLFW.GLFW_KEY_ENTER || key == GLFW.GLFW_KEY_KP_ENTER || key == GLFW.GLFW_KEY_ESCAPE) {
                 focusedText = null;
                 selectAllText = false;
                 return true;
             }
+            return true;
+        }
+        if (control && key == GLFW.GLFW_KEY_F && !GuiPreferences.separateCategoryWindows()) {
+            searchFocused = true;
+            return true;
+        }
+        if (searchFocused) {
+            if (key == GLFW.GLFW_KEY_BACKSPACE) {
+                if (control) search = "";
+                else if (!search.isEmpty()) search = search.substring(0, search.length() - 1);
+                return true;
+            }
+            if (control && key == GLFW.GLFW_KEY_V) {
+                String clipboard = Minecraft.getInstance().keyboardHandler.getClipboard();
+                if (clipboard != null) search = (search + clipboard.replaceAll("\\s+", " ")).substring(0, Math.min(48, search.length() + clipboard.length()));
+                return true;
+            }
+            if (key == GLFW.GLFW_KEY_ENTER || key == GLFW.GLFW_KEY_KP_ENTER) {
+                // Enter toggles the top result, so "type, Enter" works like a launcher.
+                List<GuiModule> results = searching() ? searchResults() : List.of();
+                if (!results.isEmpty()) {
+                    GuiModule top = results.getFirst();
+                    top.toggle();
+                    if (top.isEnabled()) Notifications.success(top.name, "Enabled");
+                    else Notifications.info(top.name, "Disabled");
+                }
+                return true;
+            }
+        }
+        if (key == GLFW.GLFW_KEY_ESCAPE && (searchFocused || !search.isEmpty())) {
+            if (!search.isEmpty()) search = "";
+            searchFocused = false;
+            scrollTarget = 0;
+            return true;
+        }
+        if (!searchFocused && Anthrax.guiKey != null && Anthrax.guiKey.matches(event)) {
+            onClose();
+            return true;
         }
         return super.keyPressed(event);
     }
@@ -1163,11 +1391,20 @@ public class AnthraxScreen extends Screen {
     @Override
     public boolean mouseReleased(MouseButtonEvent event) {
         activeDrag = null;
+        draggingSlider = null;
         return super.mouseReleased(event);
     }
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (InputConstants.isKeyDown(Minecraft.getInstance().getWindow(), GLFW.GLFW_KEY_LEFT_SHIFT)
+                || InputConstants.isKeyDown(Minecraft.getInstance().getWindow(), GLFW.GLFW_KEY_RIGHT_SHIFT)) {
+            Setting.Num slider = hoveredSlider;
+            if (slider != null) {
+                slider.nudge(scrollY > 0 ? 1 : -1);
+                return true;
+            }
+        }
         if (GuiPreferences.separateCategoryWindows()) {
             int px = Math.round((float) mouseX * gs / uiOverride);
             int py = Math.round((float) mouseY * gs / uiOverride);
@@ -1214,12 +1451,30 @@ public class AnthraxScreen extends Screen {
             case "Auto Totem", "Totem Notifier" -> new ItemStack(Items.TOTEM_OF_UNDYING);
             case "Auto Anchor" -> new ItemStack(Items.RESPAWN_ANCHOR);
             case "Aim Assist" -> new ItemStack(Items.TARGET);
+            case "Render Method" -> new ItemStack(Items.SPYGLASS);
             case "Player Dig Safety" -> new ItemStack(Items.IRON_PICKAXE);
             case "Time Changer", "FPS Chart" -> new ItemStack(Items.CLOCK);
             case "Show Player List" -> new ItemStack(Items.PLAYER_HEAD);
             case "Player ESP" -> new ItemStack(Items.PLAYER_HEAD);
             case "Advanced ESP" -> new ItemStack(Items.SPYGLASS);
             case "Seed-Ray" -> new ItemStack(Items.DIAMOND_ORE);
+            case "Base Finder" -> new ItemStack(Items.RECOVERY_COMPASS);
+            case "Waypoints" -> new ItemStack(Items.LODESTONE);
+            case "Auto Armor" -> new ItemStack(Items.NETHERITE_CHESTPLATE);
+            case "Nametags" -> new ItemStack(Items.NAME_TAG);
+            case "Tracers" -> new ItemStack(Items.LEAD);
+            case "Storage ESP" -> new ItemStack(Items.SHULKER_BOX);
+            case "Hole ESP" -> new ItemStack(Items.OBSIDIAN);
+            case "Trajectories" -> new ItemStack(Items.BOW);
+            case "Logout Spots" -> new ItemStack(Items.OAK_DOOR);
+            case "Breadcrumbs" -> new ItemStack(Items.BREAD);
+            case "Fullbright" -> new ItemStack(Items.GLOWSTONE);
+            case "Freecam" -> new ItemStack(Items.ENDER_EYE);
+            case "Zoom" -> new ItemStack(Items.SPYGLASS);
+            case "Friends" -> new ItemStack(Items.TOTEM_OF_UNDYING);
+            case "Commands" -> new ItemStack(Items.COMMAND_BLOCK);
+            case "Config Profiles" -> new ItemStack(Items.WRITABLE_BOOK);
+            case "HUD" -> new ItemStack(Items.ITEM_FRAME);
             case "World Themes" -> new ItemStack(Items.AMETHYST_SHARD);
             case "Font Size Override", "Loadout Manager" -> new ItemStack(Items.BOOK);
             case "Cosmic Crosshair", "Show Cosmic Crosshair" -> new ItemStack(Items.NETHER_STAR);

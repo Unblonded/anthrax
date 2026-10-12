@@ -19,8 +19,12 @@ public final class GuiPreferences {
             int theme = Integer.parseInt(properties.getProperty("gui.theme", Integer.toString(Theme.idx)));
             if (theme >= 0 && theme < Theme.NAMES.length) Theme.idx = theme;
         } catch (NumberFormatException ignored) {}
-        Draw.FANCY = Boolean.parseBoolean(properties.getProperty("gui.fancy", Boolean.toString(Draw.FANCY)));
-        Draw.AA = Boolean.parseBoolean(properties.getProperty("gui.antialias", Boolean.toString(Draw.AA)));
+        // The effects level is the source of truth; older configs only stored the flags it implies.
+        boolean fancy = Boolean.parseBoolean(properties.getProperty("gui.fancy", "true"));
+        boolean aa = Boolean.parseBoolean(properties.getProperty("gui.antialias", "false"));
+        int fx = !fancy ? 0 : aa ? 2 : 1;
+        try { fx = Integer.parseInt(properties.getProperty("gui.fx", Integer.toString(fx))); } catch (NumberFormatException ignored) {}
+        Draw.setFx(fx);
         lastCategory = properties.getProperty("gui.lastCategory", "");
         separateCategoryWindows = Boolean.parseBoolean(properties.getProperty("gui.separateCategoryWindows", "false"));
         windowPositions.clear();
@@ -40,6 +44,7 @@ public final class GuiPreferences {
 
     public static void save(Properties properties) {
         properties.setProperty("gui.theme", Integer.toString(Theme.idx));
+        properties.setProperty("gui.fx", Integer.toString(Draw.FX));
         properties.setProperty("gui.fancy", Boolean.toString(Draw.FANCY));
         properties.setProperty("gui.antialias", Boolean.toString(Draw.AA));
         properties.setProperty("gui.lastCategory", lastCategory);
@@ -49,6 +54,7 @@ public final class GuiPreferences {
 
     public static void save(java.util.Map<String, String> values) {
         values.put("gui.theme", Integer.toString(Theme.idx));
+        values.put("gui.fx", Integer.toString(Draw.FX));
         values.put("gui.fancy", Boolean.toString(Draw.FANCY));
         values.put("gui.antialias", Boolean.toString(Draw.AA));
         values.put("gui.lastCategory", lastCategory);

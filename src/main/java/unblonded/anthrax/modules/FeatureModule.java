@@ -36,9 +36,19 @@ public abstract class FeatureModule {
 
     protected void onToggle(boolean enabled) {}
     public void tick(Minecraft client) {}
+    /** Called once per rendered frame while enabled; {@code dt} is the frame time in seconds. */
+    public void frame(Minecraft client, float dt) {}
+
+    /** Short live status for the HUD module list, e.g. a mode or a target name. Null shows nothing. */
+    public String hudInfo() { return null; }
+
+    /** True for infrastructure modules that should not appear in the HUD module list. */
+    protected boolean hiddenFromList() { return false; }
 
     public final GuiModule asGuiModule() {
-        GuiModule module = new GuiModule(name, description, category, this::isEnabled, this::setEnabled);
+        GuiModule module = new GuiModule(name, description, category, this::isEnabled, this::setEnabled)
+                .info(this::hudInfo)
+                .hiddenFromList(hiddenFromList());
         for (Setting setting : settings()) module.add(setting);
         return module;
     }

@@ -2,7 +2,13 @@
   "required": true,
   "package": "unblonded.anthrax.mixin",
   "compatibilityLevel": "JAVA_25",
-  "mixins": [
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "overwrites": {
+    "requireAnnotations": true
+  },
+  "client": [
     "CrystalPlaceMixin",
     "ChatFilterMixin",
     "ContainerScanMixin",
@@ -16,12 +22,18 @@
     "ModelPartAccessor",
     "AvatarHandOutlineMixin",
     "PlayerEspMixin",
-    "WorldGizmoMixin"
-  ],
-  "injectors": {
-    "defaultRequire": 1
-  },
-  "overwrites": {
-    "requireAnnotations": true
-	}
+    "WorldGizmoMixin",
+    "KeyboardMixin",
+    "EntityEventMixin",
+    "ClientClockMixin",
+    "EntityPickMixin",
+    "FontHintingMixin",
+    "CameraMixin",
+    "LightmapMixin",
+    "KeyboardInputMixin",
+    "EntityTurnMixin",
+    "MouseScrollMixin",
+    "NametagHideMixin",
+    "LivingNametagHideMixin"
+  ]
 }

@@ -1,64 +1,56 @@
 package unblonded.anthrax.modules.visual;
 
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.minecraft.client.Minecraft;
-import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
 import unblonded.anthrax.modules.FeatureModule;
 import unblonded.anthrax.modules.Setting;
+import unblonded.anthrax.modules.combat.TotemPops;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
-/** Displays nearby players with the status details shown by Packet Edit's player list. */
+/** Nearby players with distance, health, armor, held item and totem pops, drawn by the HUD. */
 public final class PlayerListModule extends FeatureModule {
+    public static final PlayerListModule INSTANCE = new PlayerListModule();
+
+    public record Entry(String name, double distance, float health, float maxHealth, int armor,
+                        ItemStack mainHand, int pops, boolean sneaking, boolean sprinting) {}
+
     private final Setting.Bool freeze = setting(Setting.Bool.standalone("Freeze list", false));
-    private final List<String> frozen = new ArrayList<>();
-    private List<String> current = List.of();
+    private final Setting.Num maxEntries = setting(Setting.Num.standalone("Max players", 8, 1, 20, 1));
+    private final Setting.Num range = setting(Setting.Num.standalone("Range", 128, 8, 512, 8));
+    private List<Entry> current = List.of();
+    private List<Entry> frozen = List.of();
     private boolean wasFrozen;
 
-    public PlayerListModule() {
-        super("Show Player List", "Show nearby players, distance, health, armor, and held items", "Visuals", false);
-        HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("anthrax", "nearby_player_list"), (graphics, delta) -> {
-            if (!isEnabled() || Minecraft.getInstance().player == null) return;
-            List<String> entries = freeze.get() ? frozen : current;
-            if (entries.isEmpty()) return;
-            int width = 0;
-            for (String line : entries) width = Math.max(width, Minecraft.getInstance().font.width(line));
-            int x = 8, y = 30, lineH = 11;
-            graphics.fill(x - 4, y - 4, x + width + 5, y + entries.size() * lineH + 4, 0xB0101020);
-            graphics.textRenderer().accept(x, y, Component.literal("Nearby Players"));
-            y += lineH;
-            for (String line : entries) { graphics.textRenderer().accept(x, y, Component.literal(line)); y += lineH; }
-        });
+    private PlayerListModule() {
+        super("Show Player List", "Nearby players with distance, health, armor, items and pops", "Visuals", false);
     }
 
     @Override public void tick(Minecraft client) {
-        if (client.player == null || client.level == null) { current = List.of(); frozen.clear(); wasFrozen = false; return; }
-        List<String> entries = new ArrayList<>();
+        if (client.player == null || client.level == null) { current = List.of(); frozen = List.of(); wasFrozen = false; return; }
+        List<Entry> entries = new ArrayList<>();
+        double rangeSq = range.get() * range.get();
         for (Player other : client.level.players()) {
-            if (other == client.player) continue;
-            String main = itemName(other.getMainHandItem());
-            String off = itemName(other.getOffhandItem());
-            String text = String.format("%s %.1fm | %.1f HP | armor %d | %s / %s%s%s",
-                    other.getName().getString(), Math.sqrt(client.player.distanceToSqr(other)), other.getHealth(), other.getArmorValue(),
-                    main, off, other.isSprinting() ? " | sprinting" : "", other.isCrouching() ? " | sneaking" : "");
-            entries.add(text);
+            if (other == client.player || other.isRemoved() || other.isSpectator()) continue;
+            double distSq = client.player.distanceToSqr(other);
+            if (distSq > rangeSq) continue;
+            entries.add(new Entry(other.getName().getString(), Math.sqrt(distSq),
+                    other.getHealth() + other.getAbsorptionAmount(), other.getMaxHealth(), other.getArmorValue(),
+                    other.getMainHandItem().copy(), TotemPops.pops(other), other.isCrouching(), other.isSprinting()));
         }
+        entries.sort(Comparator.comparingDouble(Entry::distance));
+        if (entries.size() > (int) maxEntries.get()) entries = entries.subList(0, (int) maxEntries.get());
         current = List.copyOf(entries);
         boolean freezeNow = freeze.get();
-        if (freezeNow && !wasFrozen) {
-            frozen.clear();
-            frozen.addAll(current);
-        } else if (!freezeNow) {
-            frozen.clear();
-        }
+        if (freezeNow && !wasFrozen) frozen = current;
+        else if (!freezeNow) frozen = List.of();
         wasFrozen = freezeNow;
     }
 
-    private static String itemName(net.minecraft.world.item.ItemStack stack) {
-        return stack.isEmpty() ? "empty" : BuiltInRegistries.ITEM.getKey(stack.getItem()).getPath();
-    }
+    public List<Entry> entries() { return freeze.get() ? frozen : current; }
+
+    @Override public String hudInfo() { return Integer.toString(current.size()); }
 }

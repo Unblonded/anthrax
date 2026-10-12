@@ -16,6 +16,7 @@ import unblonded.anthrax.modules.utility.LoadoutManagerModule;
 import unblonded.anthrax.modules.utility.AutoSellModule;
 import unblonded.anthrax.modules.utility.FpsChartModule;
 import unblonded.anthrax.modules.utility.InteractionCancelerModule;
+import unblonded.anthrax.modules.utility.RenderMethodModule;
 import unblonded.anthrax.modules.utility.TotemNotifierModule;
 import unblonded.anthrax.modules.visual.TimeChangerModule;
 import unblonded.anthrax.modules.visual.PlayerListModule;
@@ -26,6 +27,7 @@ import unblonded.anthrax.modules.visual.HandRenderModule;
 import unblonded.anthrax.modules.visual.BlockEspModule;
 import unblonded.anthrax.modules.visual.PlayerEspModule;
 import unblonded.anthrax.modules.visual.WorldThemeModule;
+import unblonded.anthrax.modules.client.HudModule;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -49,44 +51,61 @@ public final class ModuleRegistry {
     private static List<String> CATEGORIES = List.of();
     private static Map<String, List<GuiModule>> BY_CATEGORY = Map.of();
 
+    /** Sidebar order; categories not listed here follow in registration order. */
+    private static final List<String> CATEGORY_ORDER = List.of("Combat", "Mining", "World", "Visuals", "Utility", "Client");
+
     static {
-        CrystalAuraModule ca = CrystalAuraModule.INSTANCE;
-        register(new GuiModule("Crystal Aura", "Anthrax crystal targeting", "Combat",
-                ca::isEnabled, ca::setEnabled)
-                .add(new Setting.Num("Smoothing", 0.05, 0.8, 0.01, ca::getSmoothing, v -> ca.setSmoothing((float) v)))
-                .add(new Setting.Num("Step interval", 1, 20, 1, ca::getStepMs, v -> ca.setStepMs((int) Math.round(v))))
-                .add(new Setting.Num("Placement delay", 0, 10, 1, ca::getTickDelay, v -> ca.setTickDelay((int) Math.round(v)))));
-        addFeature(new AutoDisconnectModule());
+        addFeature(CrystalAuraModule.INSTANCE);
         addFeature(new AutoTotemModule());
         addFeature(new AutoCrystalModule());
         addFeature(new CrystalSpamModule());
         addFeature(new AimAssistModule());
         addFeature(new AutoAnchorModule());
         addFeature(new SelfCrystalModule());
-        addFeature(new AirUnderCheckModule());
+        addFeature(new unblonded.anthrax.modules.combat.AutoArmorModule());
+        addFeature(new TotemNotifierModule());
+        addFeature(AirUnderCheckModule.INSTANCE);
         addFeature(SeedRayModule.INSTANCE);
-        addFeature(new TimeChangerModule());
-        addFeature(new PlayerListModule());
+        addFeature(unblonded.anthrax.modules.world.BaseFinderModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.world.WaypointsModule.INSTANCE);
         addFeature(BlockEspModule.INSTANCE);
         addFeature(PlayerEspModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.NametagsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.TracersModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.StorageEspModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.HoleEspModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.TrajectoriesModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.LogoutSpotsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.BreadcrumbsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.FullbrightModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.FreecamModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.ZoomModule.INSTANCE);
+        addFeature(PlayerListModule.INSTANCE);
         addFeature(WorldThemeModule.INSTANCE);
-        addFeature(FontSizeModule.INSTANCE);
+        addFeature(TimeChangerModule.INSTANCE);
         addFeature(CosmicCrosshairModule.INSTANCE);
         addFeature(NoRenderModule.INSTANCE);
         addFeature(HandRenderModule.INSTANCE);
-        addFeature(new TotemNotifierModule());
-        addFeature(new InteractionCancelerModule());
+        addFeature(new AutoDisconnectModule());
+        addFeature(InteractionCancelerModule.INSTANCE);
+        addFeature(new RenderMethodModule());
         addFeature(ChatFilterModule.INSTANCE);
         addFeature(StorageScanModule.INSTANCE);
         addFeature(LoadoutManagerModule.INSTANCE);
         addFeature(AutoSellModule.INSTANCE);
-        addFeature(new FpsChartModule());
+        addFeature(FpsChartModule.INSTANCE);
+        addFeature(HudModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.client.FriendsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.client.CommandsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.client.ProfilesModule.INSTANCE);
+        addFeature(FontSizeModule.INSTANCE);
     }
 
     private ModuleRegistry() {}
 
     public static void register(GuiModule module) {
         ALL.add(module);
+        allView = null;
         refreshCategories();
     }
 
@@ -95,7 +114,12 @@ public final class ModuleRegistry {
         register(feature.asGuiModule());
     }
 
-    public static List<GuiModule> all() { return List.copyOf(ALL); }
+    private static List<GuiModule> allView;
+
+    public static List<GuiModule> all() {
+        if (allView == null) allView = List.copyOf(ALL);
+        return allView;
+    }
 
     public static List<String> categories() { return CATEGORIES; }
 
@@ -107,7 +131,12 @@ public final class ModuleRegistry {
         Map<String, List<GuiModule>> immutableGroups = new LinkedHashMap<>();
         grouped.forEach((category, modules) -> immutableGroups.put(category, List.copyOf(modules)));
         BY_CATEGORY = Collections.unmodifiableMap(immutableGroups);
-        CATEGORIES = List.copyOf(grouped.keySet());
+        List<String> ordered = new ArrayList<>(grouped.keySet());
+        ordered.sort(java.util.Comparator.comparingInt(category -> {
+            int index = CATEGORY_ORDER.indexOf(category);
+            return index < 0 ? CATEGORY_ORDER.size() : index;
+        }));
+        CATEGORIES = List.copyOf(ordered);
     }
 
     public static List<GuiModule> inCategory(String category) {

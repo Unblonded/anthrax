@@ -3,7 +3,7 @@ package unblonded.anthrax.modules.visual;
 import unblonded.anthrax.modules.FeatureModule;
 import unblonded.anthrax.modules.Setting;
 
-/** First-person hand scale/offset and the optional sword-blocking pose. */
+/** First-person hand scale/offset, the optional sword-blocking pose, and the neon hand/item outline. */
 public final class HandRenderModule extends FeatureModule {
     public static final HandRenderModule INSTANCE = new HandRenderModule();
     private final Setting.Num scale = setting(Setting.Num.standalone("Scale", 1, .1, 5, .05));
@@ -12,11 +12,16 @@ public final class HandRenderModule extends FeatureModule {
     private final Setting.Num z = setting(Setting.Num.standalone("Z offset", 0, -10, 10, .05));
     private final Setting.Bool swordBlocking = setting(Setting.Bool.standalone("Sword blocking", false));
     private final Setting.Bool outline = setting(Setting.Bool.standalone("Hand and item outline", true));
-    private HandRenderModule() { super("Hand Render", "Scale, move, and pose the first-person hand", "Visuals", true); }
+    private final Setting.Mode outlineColor = setting(Setting.Mode.standalone("Outline color", "Rainbow", "Rainbow", "Theme", "Ice", "White"));
+    private final Setting.Num glow = setting(Setting.Num.standalone("Glow strength", 70, 0, 100, 5));
+    private HandRenderModule() { super("Hand Render", "Scale, move, pose and outline the first-person hand", "Visuals", true); }
     public float scale() { return (float)scale.get(); }
     public float x() { return (float)x.get(); }
     public float y() { return (float)y.get(); }
     public float z() { return (float)z.get(); }
     public boolean swordBlocking() { return swordBlocking.get(); }
-    public boolean outline() { return outline.get(); }
+    /** The outline only draws while the module itself is on. */
+    public boolean outline() { return isEnabled() && outline.get(); }
+    public String outlineColor() { return outlineColor.get(); }
+    public float glowStrength() { return (float) glow.get() / 100f; }
 }

@@ -18,6 +18,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import unblonded.anthrax.modules.visual.HandRenderModule;
+import unblonded.anthrax.render.Glow;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -69,11 +70,9 @@ public abstract class ItemOutlineMixin {
                 spriteContour(quad, spriteSilhouette);
             }
             if (spriteSilhouette.isEmpty()) return;
-            double time = System.currentTimeMillis() * .001;
-            int rgb = spectrum(time * 55);
-            int alpha = (int) (235 + 20 * (.5 + .5 * Math.sin(time * 3.1)));
+            int rgb = Glow.color();
             collector.submitCustomGeometry(pose, RenderTypes.linesTranslucent(), (matrix, out) -> {
-                for (Edge edge : spriteSilhouette) line(matrix, out, edge.a, edge.b, rgb, alpha);
+                for (Edge edge : spriteSilhouette) line(matrix, out, edge.a, edge.b, rgb);
             });
             return;
         }
@@ -85,13 +84,9 @@ public abstract class ItemOutlineMixin {
         }
         if (silhouette.isEmpty()) return;
 
-        double time = System.currentTimeMillis() * .001;
-        int rgb = spectrum(time * 55);
-        int alpha = (int) (235 + 20 * (.5 + .5 * Math.sin(time * 3.1)));
+        int rgb = Glow.color();
         collector.submitCustomGeometry(pose, RenderTypes.linesTranslucent(), (matrix, out) -> {
-            for (Edge edge : silhouette) {
-                line(matrix, out, edge.a, edge.b, rgb, alpha);
-            }
+            for (Edge edge : silhouette) line(matrix, out, edge.a, edge.b, rgb);
         });
     }
 
@@ -153,25 +148,8 @@ public abstract class ItemOutlineMixin {
                 Math.round((ay + (by - ay) * v) * 10000), Math.round((az + (bz - az) * v) * 10000));
     }
 
-    private static void line(PoseStack.Pose pose, VertexConsumer out, Point a, Point b, int rgb, int alpha) {
-        int halo = (alpha << 24) | rgb;
-        int core = (alpha << 24) | 0xFFFFFF;
-        vertex(pose, out, a, halo, 3.5f);
-        vertex(pose, out, b, halo, 3.5f);
-        vertex(pose, out, a, core, 1.25f);
-        vertex(pose, out, b, core, 1.25f);
-    }
-
-    private static void vertex(PoseStack.Pose pose, VertexConsumer out, Point p, int color, float width) {
-        out.addVertex(pose, p.x / 10000f, p.y / 10000f, p.z / 10000f)
-                .setColor(color).setNormal(pose, 0, 0, 1).setLineWidth(width);
-    }
-
-    private static int spectrum(double time) {
-        int r = (int) (127 + 128 * Math.sin(time * .0174533));
-        int g = (int) (127 + 128 * Math.sin(time * .0174533 + 2.094));
-        int b = (int) (127 + 128 * Math.sin(time * .0174533 + 4.188));
-        return (r << 16) | (g << 8) | b;
+    private static void line(PoseStack.Pose pose, VertexConsumer out, Point a, Point b, int rgb) {
+        Glow.segment(pose, out, a.x / 10000f, a.y / 10000f, a.z / 10000f, b.x / 10000f, b.y / 10000f, b.z / 10000f, rgb);
     }
 
     private record Point(long x, long y, long z) implements Comparable<Point> {

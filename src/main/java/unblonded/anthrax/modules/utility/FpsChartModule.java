@@ -1,34 +1,41 @@
 package unblonded.anthrax.modules.utility;
 
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.minecraft.client.Minecraft;
-import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
 import unblonded.anthrax.gui.AnthraxScreen;
 import unblonded.anthrax.modules.FeatureModule;
 import unblonded.anthrax.modules.Setting;
 
-/** Rolling FPS graph with Packet Edit's frame sampling and in-game visibility option. */
+/** Rolling frame-rate graph. Sampling and drawing happen in the HUD (see Hud), once per frame. */
 public final class FpsChartModule extends FeatureModule {
+    public static final FpsChartModule INSTANCE = new FpsChartModule();
+    public static final int SAMPLES = 100;
+
     private final Setting.Num sampleRate = setting(Setting.Num.standalone("Sample rate (frames)", 5, 1, 100, 1));
     private final Setting.Bool inGame = setting(Setting.Bool.standalone("Show in game", true));
-    private final int[] values = new int[100];
-    private int cursor, frames;
+    private final int[] values = new int[SAMPLES];
+    private int cursor, frames, filled;
 
-    public FpsChartModule() {
+    private FpsChartModule() {
         super("FPS Chart", "Plot the recent frame rate", "Utility", false);
-        HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("anthrax", "fps_chart"), (graphics, delta) -> {
-            Minecraft mc = Minecraft.getInstance();
-            if (!isEnabled() || mc.player == null || (!inGame.get() && !(mc.gui.screen() instanceof AnthraxScreen))) return;
-            if (++frames >= (int)sampleRate.get()) { values[cursor++ % values.length] = mc.getFps(); frames = 0; }
-            int x = 8, y = 48, w = 102, h = 44;
-            graphics.fill(x - 4, y - 4, x + w + 4, y + h + 15, 0xB0101020);
-            graphics.textRenderer().accept(x, y - 1, Component.literal("FPS " + mc.getFps()));
-            for (int i=0; i<values.length; i++) {
-                int fps = values[(cursor + i) % values.length];
-                int barHeight = Math.max(1, Math.min(h, fps * h / 300));
-                graphics.fill(x + i, y + h - barHeight, x + i + 1, y + h, fps < 60 ? 0xFFFF6655 : 0xFF66DDFF);
-            }
-        });
     }
+
+    /** Whether the chart should be drawn this frame. */
+    public boolean visible(Minecraft mc) {
+        return isEnabled() && mc.player != null && (inGame.get() || mc.gui.screen() instanceof AnthraxScreen);
+    }
+
+    /** Called once per rendered frame while visible. */
+    public void sample(int fps) {
+        if (++frames < (int) sampleRate.get()) return;
+        frames = 0;
+        values[cursor] = fps;
+        cursor = (cursor + 1) % SAMPLES;
+        filled = Math.min(SAMPLES, filled + 1);
+    }
+
+    /** Sample {@code i} in age order, 0 = oldest. */
+    public int value(int i) { return values[(cursor + i) % SAMPLES]; }
+    public int filled() { return filled; }
+
+    @Override public String hudInfo() { return Minecraft.getInstance().getFps() + " fps"; }
 }

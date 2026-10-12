@@ -18,7 +18,7 @@ public final class WorldThemeModule extends FeatureModule {
     public static final WorldThemeModule INSTANCE = new WorldThemeModule();
 
     private final Setting.Mode theme = setting(Setting.Mode.standalone(
-            "World theme", "Cyberpunk Neon", "Cyberpunk Neon", "Void / Eclipse"));
+            "World theme", "Liquid Glass", "Liquid Glass", "Cyberpunk Neon", "Void / Eclipse"));
     private final Setting.Mode grade = setting(Setting.Mode.standalone(
             "Color grade", "Theme", "Theme", "Neon", "Noir", "Sepia"));
     private final Setting.Bool screenGrade = setting(Setting.Bool.standalone("Screen color grade", true));
@@ -37,8 +37,11 @@ public final class WorldThemeModule extends FeatureModule {
             "Color mode", "Theme", "Theme", "Spectrum", "Aurora"));
     private final Setting.Num darkness = setting(Setting.Num.standalone("Darkness", 68, 0, 100, 1));
     private final Setting.Bool vignette = setting(Setting.Bool.standalone("Vignette", true));
-    private final Setting.Bool shards = setting(Setting.Bool.standalone("Floating shards", true));
     private final Setting.Bool constellation = setting(Setting.Bool.standalone("Constellation", true));
+    private final Setting.Bool caustics = setting(Setting.Bool.standalone("Glass caustics", true));
+    private final Setting.Bool ripples = setting(Setting.Bool.standalone("Glass ripples", true));
+
+    private boolean glass() { return theme.get().equals("Liquid Glass"); }
 
 
     // theme accents (no alpha, used by WorldFx)
@@ -47,6 +50,7 @@ public final class WorldThemeModule extends FeatureModule {
         double t = System.currentTimeMillis() * .001;
         if (mode.equals("Spectrum")) return 0xFF000000 | WorldFxExtra.hsl(t * 45 + (primary ? 0 : 150), .9f, .6f);
         if (mode.equals("Aurora")) return 0xFF000000 | WorldFxExtra.hsl(150 + 40 * Math.sin(t * .4) + (primary ? 0 : 110), .85f, .6f);
+        if (glass()) return primary ? 0xFF8FE9FF : 0xFFC9B2FF;
         return theme.get().equals("Void / Eclipse")
                 ? (primary ? 0xFF9A73FF : 0xFF3BE4FF)
                 : (primary ? 0xFF4AF5FF : 0xFFFF4DCE);
@@ -65,6 +69,10 @@ public final class WorldThemeModule extends FeatureModule {
             float str = (float) strength.get() / 100f;
             float dark = (float) darkness.get() / 100f;
 
+            if (glass()) {
+                frost(graphics, w, h, str, dark);
+                return;
+            }
             if (screenGrade.get()) {
                 int[] colors = palette();
                 int alpha = Math.round(90 * str);
@@ -86,12 +94,36 @@ public final class WorldThemeModule extends FeatureModule {
         });
     }
 
+    /** Frosted-glass screen pass: cool top sheen, soft edge refraction fringes, light vignette. */
+    private void frost(net.minecraft.client.gui.GuiGraphicsExtractor g, int w, int h, float str, float dark) {
+        int tintA = accent(true) & 0xFFFFFF, tintB = accent(false) & 0xFFFFFF;
+        if (screenGrade.get()) {
+            int top = Math.round(46 * str);
+            g.fillGradient(0, 0, w, h / 3, (top << 24) | 0xEAF8FF, 0x00EAF8FF);
+            g.fillGradient(0, h * 2 / 3, w, h, 0x00000000, (Math.round(30 * str) << 24) | scale(tintB, .5f));
+        }
+        if (dark > 0) g.fill(0, 0, w, h, (int) (45 * dark) << 24);
+        if (vignette.get()) {
+            // Chromatic fringe: cyan on the left/top, violet on the right/bottom, like light bending at a lens edge.
+            int edge = Math.max(4, Math.min(w, h) / 14);
+            int a = Math.round(70 * str);
+            g.fillGradient(0, 0, w, edge, (a << 24) | tintA, tintA);
+            g.fillGradient(0, h - edge, w, h, tintB, (a << 24) | tintB);
+            for (int i = 0; i < edge; i += 2) {
+                float k = 1f - i / (float) edge;
+                int col = (int) (a * k * k) << 24;
+                g.fill(i, 0, i + 2, h, col | tintA);
+                g.fill(w - i - 2, 0, w - i, h, col | tintB);
+            }
+        }
+    }
+
     public static void tintSky(Vector4f skyColor) {
         WorldThemeModule module = INSTANCE;
         if (!module.isEnabled() || !module.skyFog.get() || skyColor == null) return;
         float blend = .34f * (float) module.strength.get() / 100f;
         float[] tint = rgb(module.palette()[0]);
-        float d = 1f - .82f * (float) module.darkness.get() / 100f;
+        float d = module.glass() ? 1f : 1f - .82f * (float) module.darkness.get() / 100f;
         skyColor.set(mix(skyColor.x, tint[0], blend) * d, mix(skyColor.y, tint[1], blend) * d,
                 mix(skyColor.z, tint[2], blend) * d, skyColor.w);
     }
@@ -102,7 +134,7 @@ public final class WorldThemeModule extends FeatureModule {
                 || fogType != FogType.NONE || NoRenderModule.isHidden(3)) return;
         float blend = .58f * (float) module.strength.get() / 100f;
         float[] tint = rgb(module.palette()[1]);
-        float d = 1f - .82f * (float) module.darkness.get() / 100f;
+        float d = module.glass() ? 1f : 1f - .82f * (float) module.darkness.get() / 100f;
         fog.color.set(mix(fog.color.x, tint[0], blend) * d, mix(fog.color.y, tint[1], blend) * d,
                 mix(fog.color.z, tint[2], blend) * d, fog.color.w);
     }
@@ -119,7 +151,7 @@ public final class WorldThemeModule extends FeatureModule {
         double vy = snow ? 0.9 : embers ? 1.2 : 0.05;
         float size = snow ? 2.6f : 2.0f;
         final double R = 12, H = 10;
-        int count = module.particles.get() ? (int) module.density.get() : 0;
+        int count = module.particles.get() && !module.glass() ? (int) module.density.get() : 0;
         double t = System.currentTimeMillis() * .001;
         float partialTick = client.getDeltaTracker().getGameTimeDeltaPartialTick(true);
         Vec3 p = client.player.getPosition(partialTick);
@@ -146,13 +178,24 @@ public final class WorldThemeModule extends FeatureModule {
                 Gizmos.point(new Vec3(p.x + dx, p.y + dy, p.z + dz), (a << 24) | (base & 0xFFFFFF), size);
             }
 
+            if (module.glass()) {
+                int mask = (module.caustics.get() ? WorldGlass.CAUSTICS : 0)
+                        | (module.particles.get() ? WorldGlass.BUBBLES : 0)
+                        | (module.ripples.get() ? WorldGlass.RIPPLES : 0);
+                WorldGlass.draw(client, module.accent(true) & 0xFFFFFF, module.accent(false) & 0xFFFFFF,
+                        (float) module.strength.get() / 100f, mask);
+                if (module.targetGlow.get())
+                    WorldFx.draw(client, module.accent(true), module.accent(false), (float) module.strength.get() / 100f,
+                            false, false, true);
+                renderer.addMainThreadGizmos(collector.drainGizmos());
+                return;
+            }
             // ---- world fx (grid wave, rings, lightning, target glow)
             WorldFx.draw(client, module.accent(true), module.accent(false),
                     (float) module.strength.get() / 100f,
                     false, module.lightning.get(), module.targetGlow.get());
 
-            int mask = (module.shards.get() ? WorldFxExtra.SHARDS : 0)
-                    | (module.constellation.get() ? WorldFxExtra.CONSTELLATION : 0);
+            int mask = module.constellation.get() ? WorldFxExtra.CONSTELLATION : 0;
             WorldFxExtra.draw(client, module.accent(true), module.accent(false),
                     (float) module.strength.get() / 100f, !module.colorMode.get().equals("Theme"), mask);
         }
@@ -183,6 +226,7 @@ public final class WorldThemeModule extends FeatureModule {
             case "Sepia" -> new int[]{0x4A3422, 0x725337};
             default -> {
                 if (!colorMode.get().equals("Theme")) yield new int[]{scale(accent(true), .3f), scale(accent(false), .26f)};
+                if (glass()) yield new int[]{0x7CC4E6, 0xB4C9F2};
                 yield theme.get().equals("Void / Eclipse")
                         ? new int[]{0x100A2B, 0x291044}
                         : new int[]{0x17133D, 0x0B3441};

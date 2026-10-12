@@ -4,20 +4,26 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
 import net.minecraft.world.entity.player.Player;
+import unblonded.anthrax.modules.FeatureModule;
+import unblonded.anthrax.modules.Setting;
 
 import java.util.Comparator;
 
-public class CrystalAuraModule {
+/** After you place a crystal, smoothly turns onto it and breaks it. */
+public final class CrystalAuraModule extends FeatureModule {
     public static final CrystalAuraModule INSTANCE = new CrystalAuraModule();
+    private static final int MAX_STEPS = 20;     // max steps before force finish
+    private static final double REACH_SQ = 4.5 * 4.5;
 
+    private final Setting.Num smoothing = setting(Setting.Num.standalone("Smoothing", 0.18, 0.05, 0.8, 0.01));
+    private final Setting.Num stepMs = setting(Setting.Num.standalone("Step interval", 2, 1, 20, 1));
+    private final Setting.Num placementDelay = setting(Setting.Num.standalone("Placement delay", 2, 0, 10, 1));
+
+    private static final int WAIT_TIMEOUT_TICKS = 20;
     private boolean waitingForCrystal = false;
     private int ticksUntilTarget = 0;
-    private int placementDelay = 2;
+    private int waitedTicks = 0;
     private EndCrystal pendingCrystal = null;
-
-    private int stepMs = 2;
-    private static final int MAX_STEPS = 20;     // max steps before force finish
-    private float smoothing = 0.18f; // exponential decay factor
 
     private float targetYaw;
     private float targetPitch;
@@ -26,29 +32,33 @@ public class CrystalAuraModule {
 
     private long lastRotationStep;
 
-    public CrystalAuraModule() {}
-
-    public void onCrystalPlace() {
-        if (!enabled) return;
-        waitingForCrystal = true;
-        ticksUntilTarget = placementDelay;
+    private CrystalAuraModule() {
+        super("Crystal Aura", "Turn onto and break crystals right after you place them", "Combat", false);
     }
 
-    public void onTick(Minecraft client) {
-        if (!enabled) return;
+    public void onCrystalPlace() {
+        if (!isEnabled()) return;
+        waitingForCrystal = true;
+        waitedTicks = 0;
+        ticksUntilTarget = (int) placementDelay.get();
+    }
+
+    @Override public void tick(Minecraft client) {
         if (client.player == null || client.level == null || client.gameMode == null) {
             clearPending();
             return;
         }
 
         if (waitingForCrystal && !rotating) {
+            // The server never confirmed a crystal (e.g. placement failed): stop waiting.
+            if (++waitedTicks > WAIT_TIMEOUT_TICKS + placementDelay.get()) { clearPending(); return; }
             if (ticksUntilTarget > 0) {
                 ticksUntilTarget--;
             } else {
                 client.player.level().getEntitiesOfClass(
                             EndCrystal.class,
                             client.player.getBoundingBox().inflate(8),
-                            e -> true
+                            e -> e.isAlive() && e.distanceToSqr(client.player.getEyePosition()) <= REACH_SQ
                     ).stream()
                     .min(Comparator.comparingDouble(e -> e.distanceToSqr(client.player)))
                     .ifPresent(crystal -> {
@@ -61,11 +71,15 @@ public class CrystalAuraModule {
             }
         }
 
-        if (!rotating) return;
+    }
+
+    /** Rotation runs per frame so the configured millisecond step interval is actually honoured. */
+    @Override public void frame(Minecraft client, float dt) {
+        if (!rotating || client.player == null || client.gameMode == null) return;
         EndCrystal crystal = pendingCrystal;
         if (crystal == null || crystal.isRemoved()) { clearPending(); return; }
         long now = System.currentTimeMillis();
-        if (now - lastRotationStep < stepMs) return;
+        if (now - lastRotationStep < (long) stepMs.get()) return;
         lastRotationStep = now;
 
         Player player = client.player;
@@ -73,7 +87,7 @@ public class CrystalAuraModule {
         float currentPitch = player.getXRot();
         float yawDiff = wrapDegrees(targetYaw - currentYaw);
         float pitchDiff = targetPitch - currentPitch;
-        float blend = Math.max(0.01f, Math.min(1f, smoothing));
+        float blend = Math.max(0.01f, Math.min(1f, (float) smoothing.get()));
         float newYaw = currentYaw + yawDiff * blend;
         float newPitch = Math.max(-90f, Math.min(90f, currentPitch + pitchDiff * blend));
         setRotation(player, newYaw, newPitch);
@@ -89,16 +103,17 @@ public class CrystalAuraModule {
         }
     }
 
-    private static void setRotation(Player player, float yaw, float pitch) {
-        player.setYRot(yaw);
-        player.setXRot(pitch);
-        player.yHeadRot = yaw;
-        player.yBodyRot = yaw;
+    /** Turns by the delta to (yaw, pitch); turn() also moves the previous rotation, avoiding render jitter. */
+    private void setRotation(Player player, float yaw, float pitch) {
+        float yawDelta = wrapDegrees(yaw - player.getYRot());
+        float pitchDelta = Math.max(-90f, Math.min(90f, pitch)) - player.getXRot();
+        player.turn(yawDelta / 0.15f, pitchDelta / 0.15f);
     }
 
     private void clearPending() {
         waitingForCrystal = false;
         ticksUntilTarget = 0;
+        waitedTicks = 0;
         pendingCrystal = null;
         rotating = false;
         stepCount = 0;
@@ -170,16 +185,7 @@ public class CrystalAuraModule {
         return true;
     }
 
-    private volatile boolean enabled = true;
-    public boolean isEnabled() { return enabled; }
-    public void setEnabled(boolean v) {
-        enabled = v;
-        if (!v) clearPending();
+    @Override protected void onToggle(boolean enabled) {
+        if (!enabled) clearPending();
     }
-    public float getSmoothing() { return smoothing; }
-    public void setSmoothing(float v) { smoothing = v; }
-    public int getStepMs() { return stepMs; }
-    public void setStepMs(int v) { stepMs = Math.max(1, v); }
-    public int getTickDelay() { return placementDelay; }
-    public void setTickDelay(int v) { placementDelay = Math.max(0, v); }
 }

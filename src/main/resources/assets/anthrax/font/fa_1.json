@@ -1,0 +1,12 @@
+{
+  "providers": [
+    {
+      "type": "ttf",
+      "file": "anthrax:fa-solid-900.ttf",
+      "size": 8.0,
+      "oversample": 1.0,
+      "shift": [0.0, 0.0],
+      "skip": ""
+    }
+  ]
+}

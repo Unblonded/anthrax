@@ -15,7 +15,12 @@ public final class ChatFilterModule extends FeatureModule {
         ChatFilterModule self = INSTANCE;
         if (!self.isEnabled()) return false;
         if (self.mode.get().equals("Mute")) return true;
-        boolean contains = message.getString().toLowerCase().contains(self.search.get().toLowerCase());
+        String query = self.search.get().trim().toLowerCase(java.util.Locale.ROOT);
+        // An empty filter would otherwise hide (or show) everything; treat it as "no filter yet".
+        if (query.isEmpty()) return false;
+        boolean contains = message.getString().toLowerCase(java.util.Locale.ROOT).contains(query);
         return self.mode.get().equals("Contains") ? contains : !contains;
     }
+
+    @Override public String hudInfo() { return mode.get(); }
 }

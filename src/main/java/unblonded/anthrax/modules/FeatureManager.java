@@ -20,6 +20,25 @@ public final class FeatureManager {
 
     public static List<FeatureModule> all() { return List.copyOf(FEATURES); }
 
+    private static long lastFrameNs = System.nanoTime();
+
+    /** Per-frame dispatch for features that need smooth motion, e.g. view rotation. */
+    public static void frame(Minecraft client) {
+        long now = System.nanoTime();
+        float dt = Math.min(0.1f, (now - lastFrameNs) / 1_000_000_000f);
+        lastFrameNs = now;
+        for (FeatureModule feature : FEATURES) {
+            if (!feature.isEnabled()) continue;
+            try {
+                feature.frame(client, dt);
+            } catch (RuntimeException exception) {
+                try { feature.setEnabled(false); }
+                catch (RuntimeException toggleFailure) { exception.addSuppressed(toggleFailure); }
+                LOGGER.error("Disabled feature '{}' after a frame failure", feature.name, exception);
+            }
+        }
+    }
+
     public static void tick(Minecraft client) {
         for (FeatureModule feature : FEATURES) {
             if (!feature.isEnabled()) continue;

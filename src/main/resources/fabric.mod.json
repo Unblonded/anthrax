@@ -3,10 +3,10 @@
 	"id": "anthrax",
 	"version": "${version}",
 	"name": "Anthrax",
-	"description": "A customizable Fabric client mod.",
+	"description": "A premium-grade utility and combat client for Fabric.",
 	"license": "GPL-3.0-only",
 	"icon": "assets/anthrax/icon.png",
-	"environment": "*",
+	"environment": "client",
 	"entrypoints": {
 		"client": [
 			"unblonded.anthrax.Anthrax"

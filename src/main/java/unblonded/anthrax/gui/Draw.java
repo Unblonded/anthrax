@@ -28,10 +28,10 @@ final class Draw {
     static int FX = 1;
     /** True when any effects are drawn (FX >= 1). Kept for existing call sites. */
     static boolean FANCY = true;
-    /** Anti-aliased corners (MAX only). */
+    /** Legacy flag kept for saved configs; corners are now always anti-aliased. */
     static boolean AA = false;
     static final String[] FX_NAMES = {"LITE", "FX", "MAX"};
-    static final String[] FX_LONG = {"Lite (no effects)", "Balanced", "Max quality"};
+    static final String[] FX_LONG = {"Lite: no blur or effects, fastest", "Balanced: blur and glass, light effects", "Max: every effect (heaviest)"};
 
     static void setFx(int level) {
         FX = Math.floorMod(level, 3);
@@ -121,9 +121,6 @@ final class Draw {
 
     static int u(float n) { return Math.round(n * S); }
 
-    /** Lite mode caps corner radii so each rounded rect needs only a handful of fills. */
-    private static int capR(int r) { return FX >= 2 ? r : Math.min(r, S * (FX == 1 ? 5 : 3)); }
-
     // Text vertical tuning. If text still looks high/low, change TEXT_NUDGE (design units, + = down).
     static final float BASELINE = 7f;
     static final float CAP_CENTER = 0.35f;
@@ -173,142 +170,79 @@ final class Draw {
         round(g, x, y, w, h, r, c, true, true);
     }
 
-    private static final int[][][] RUN_TABLE = new int[2][128][];
-    private static final Map<Integer, int[]> FAST_RUNS = new HashMap<>();
-
-    /** Corner profile for a radius as merged runs: {startRow, rowCount, solidInset, aaLevel} per run. */
-    private static int[] runs(int r, boolean aa) {
-        int[][] table = RUN_TABLE[aa ? 1 : 0];
-        if (r < table.length) {
-            int[] cached = table[r];
-            if (cached == null) {
-                cached = buildRuns(r, aa);
-                table[r] = cached;
-            }
-            return cached;
-        }
-        return buildRuns(r, aa);
-    }
-
-    private static int[] buildRuns(int rr, boolean aa) {
-        List<int[]> out = new ArrayList<>();
-        int[] cur = null;
-        for (int i = 0; i < rr; i++) {
-            float dy = rr - i - 0.5f;
-            float inset = rr - (float) Math.sqrt(rr * rr - dy * dy);
-            int full = (int) Math.ceil(inset);
-            float cov = full - inset;
-            int q = (aa && full > 0 && cov > 0.12f) ? (cov < 0.4f ? 1 : cov < 0.75f ? 2 : 3) : 0;
-            if (cur != null && cur[2] == full && cur[3] == q) {
-                cur[1]++;
-            } else {
-                cur = new int[]{i, 1, full, q};
-                out.add(cur);
-            }
-        }
-        int[] flat = new int[out.size() * 4];
-        for (int k = 0; k < out.size(); k++) System.arraycopy(out.get(k), 0, flat, k * 4, 4);
-        return flat;
-    }
-
-    private static final float[] AA_LEVELS = {0f, 0.25f, 0.55f, 0.85f};
-
     /**
-     * Rounded rectangle. Fancy: true radius with anti-aliased edges. Lite: capped radius, and opaque
-     * full-corner shapes are drawn as a union of a few overlapping rects (one fill per corner band).
+     * Rounded rectangle with anti-aliased corners (like CSS border-radius), optionally rounding only
+     * the top or bottom pair of corners. Works with translucent colors.
      */
     static void round(GuiGraphicsExtractor g, int x, int y, int w, int h, int r, int c, boolean top, boolean bottom) {
-        if (w <= 0 || h <= 0) return;
-        r = Math.max(0, Math.min(capR(r), Math.min(w, h) / 2));
-        if (r == 0) { fill(g, x, y, w, h, c); return; }
-        int a = c >>> 24;
-        if (FX < 2 && a == 255 && top && bottom) {
-            int[] lite = runs(r, false);
-            for (int k = 0; k < lite.length; k += 4) {
-                int start = lite[k], full = lite[k + 2];
-                fill(g, x + full, y + start, w - 2 * full, h - 2 * start, c);
-            }
-            fill(g, x, y + r, w, h - 2 * r, c);
-            return;
-        }
-        boolean aa = AA;
+        if (w <= 0 || h <= 0 || (c >>> 24) == 0) return;
+        r = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+        if (r < 2) { fill(g, x, y, w, h, c); return; }
+        // Anti-aliased corners from a coverage mask; the straight parts are plain fills. Nothing overlaps,
+        // so translucent colors stay perfectly even.
+        var disk = Shapes.disk(r);
+        int d = 2 * r;
+        if (top) {
+            Shapes.blit(g, disk, x, y, r, r, 0, 0, r, r, d, d, c);
+            Shapes.blit(g, disk, x + w - r, y, r, r, r, 0, r, r, d, d, c);
+            fill(g, x + r, y, w - 2 * r, r, c);
+        } else fill(g, x, y, w, r, c);
+        if (bottom) {
+            Shapes.blit(g, disk, x, y + h - r, r, r, 0, r, r, r, d, d, c);
+            Shapes.blit(g, disk, x + w - r, y + h - r, r, r, r, r, r, r, d, d, c);
+            fill(g, x + r, y + h - r, w - 2 * r, r, c);
+        } else fill(g, x, y + h - r, w, r, c);
         fill(g, x, y + r, w, h - 2 * r, c);
-        if (!top) fill(g, x, y, w, r, c);
-        if (!bottom) fill(g, x, y + h - r, w, r, c);
-        if (!top && !bottom) return;
-        boolean opaque = a == 255;
-        int[] rs = runs(r, aa);
-        for (int k = 0; k < rs.length; k += 4) {
-            int start = rs[k], n = rs[k + 1], full = rs[k + 2], q = rs[k + 3];
-            int edge = (aa && q > 0) ? alpha(c, (int) (a * AA_LEVELS[q])) : 0;
-            if (top) run(g, x, y + start, w, n, full, edge, c, opaque);
-            if (bottom) run(g, x, y + h - start - n, w, n, full, edge, c, opaque);
-        }
     }
 
-    private static void run(GuiGraphicsExtractor g, int x, int yy, int w, int n, int full, int edge, int c, boolean opaque) {
-        if (edge != 0) {
-            if (opaque) {
-                // one wide edge-colored fill; the solid fill below covers its middle
-                fill(g, x + full - 1, yy, w - 2 * full + 2, n, edge);
-            } else {
-                fill(g, x + full - 1, yy, 1, n, edge);
-                fill(g, x + w - full, yy, 1, n, edge);
-            }
-        }
-        fill(g, x + full, yy, w - 2 * full, n, c);
-    }
-
-    /** Cheap rounded rect for glows/shadows: no anti-aliasing, corner drawn in a few bands. */
+    /** Soft-edged rounded rect for glows and halos. */
     static void roundFast(GuiGraphicsExtractor g, int x, int y, int w, int h, int r, int c) {
         if (!FANCY || w <= 0 || h <= 0) return;
-        r = Math.max(0, Math.min(r, Math.min(w, h) / 2));
-        if (r == 0) { fill(g, x, y, w, h, c); return; }
-        if (FX < 2) {
-            // cheap soft shape: one middle band + two inset caps (3 fills, no overlap so alpha stays even)
-            int k = Math.max(1, r * 2 / 3), ins = Math.max(1, r / 3);
-            fill(g, x, y + k, w, h - 2 * k, c);
-            fill(g, x + ins, y, w - 2 * ins, k, c);
-            fill(g, x + ins, y + h - k, w - 2 * ins, k, c);
-            return;
-        }
-        fill(g, x, y + r, w, h - 2 * r, c);
-        int[] bands = FAST_RUNS.computeIfAbsent(r, radius -> {
-            int count = Math.min(radius, 5);
-            int[] runs = new int[count * 3];
-            for (int b = 0; b < count; b++) {
-                int r0 = radius * b / count, r1 = radius * (b + 1) / count;
-                float dy = radius - (r0 + r1) / 2f;
-                int inset = Math.round(radius - (float) Math.sqrt(Math.max(0, radius * radius - dy * dy)));
-                runs[b * 3] = r0;
-                runs[b * 3 + 1] = r1;
-                runs[b * 3 + 2] = inset;
-            }
-            return runs;
-        });
-        for (int i = 0; i < bands.length; i += 3) {
-            int r0 = bands[i], r1 = bands[i + 1], inset = bands[i + 2];
-            fill(g, x + inset, y + r0, w - 2 * inset, r1 - r0, c);
-            fill(g, x + inset, y + h - r1, w - 2 * inset, r1 - r0, c);
-        }
+        // Used for glows and halos: a soft-edged rounded rect reads like a CSS blur instead of a hard slab.
+        int s = Math.max(2, Math.min(r, Math.min(w, h) / 2));
+        soft(g, x, y, w, h, Math.max(0, r - s), s, c);
     }
 
-    /** Rounded rect with a t-pixel border. Fill must be opaque. */
+    /**
+     * Soft rounded rectangle (like CSS box-shadow): solid inside a rounded rect inset by {@code s},
+     * fading to transparent at the outer bounds over {@code s} pixels.
+     */
+    static void soft(GuiGraphicsExtractor g, int x, int y, int w, int h, int r, int s, int c) {
+        if (w <= 0 || h <= 0 || (c >>> 24) == 0) return;
+        s = Math.max(1, Math.min(s, Math.min(w, h) / 2));
+        r = Math.max(0, Math.min(r, Math.min(w, h) / 2 - s));
+        int k = r + s;                                  // corner tile size
+        var corner = Shapes.softCorner(r, s);
+        Shapes.blit(g, corner, x, y, k, k, 0, 0, k, k, k, k, c);
+        Shapes.blit(g, corner, x + w - k, y, k, k, k, 0, -k, k, k, k, c);
+        Shapes.blit(g, corner, x, y + h - k, k, k, 0, k, k, -k, k, k, c);
+        Shapes.blit(g, corner, x + w - k, y + h - k, k, k, k, k, -k, -k, k, k, c);
+        int clear = alpha(c, 0);
+        // edges: fade over s, solid over r (the corner tiles cover the rest)
+        g.fillGradient(x + k, y, x + w - k, y + s, clear, c);
+        g.fillGradient(x + k, y + h - s, x + w - k, y + h, c, clear);
+        horizontal(g, x, y + k, s, h - 2 * k, clear, c);
+        horizontal(g, x + w - s, y + k, s, h - 2 * k, c, clear);
+        fill(g, x + k, y + s, w - 2 * k, r, c);
+        fill(g, x + k, y + h - k, w - 2 * k, r, c);
+        fill(g, x + s, y + k, w - 2 * s, h - 2 * k, c);
+    }
+
+    private static void horizontal(GuiGraphicsExtractor g, int x, int y, int w, int h, int c1, int c2) {
+        if (w > 0 && h > 0) horizontalGradient(g, x, y, w, h, c1, c2);
+    }
+
+    /** Rounded rect with a t-pixel border. */
     static void roundBorder(GuiGraphicsExtractor g, int x, int y, int w, int h, int r, int t, int border, int fill) {
-        int ro = capR(r);
-        round(g, x, y, w, h, ro, border);
-        round(g, x + t, y + t, w - 2 * t, h - 2 * t, Math.max(0, ro - t), fill);
+        round(g, x + t, y + t, w - 2 * t, h - 2 * t, Math.max(0, r - t), fill);
+        outline(g, x, y, w, h, r, t, border, border);
     }
 
     static void circle(GuiGraphicsExtractor g, int cx, int cy, int radius, int c) {
-        if (FX < 2 && (c >>> 24) == 255 && radius >= 2) {
-            // octagon from two overlapping rects: 2 fills instead of a stack of corner runs
-            int k = Math.max(1, Math.round(radius * 0.29f)), d = radius * 2;
-            fill(g, cx - radius + k, cy - radius, d - 2 * k, d, c);
-            fill(g, cx - radius, cy - radius + k, d, d - 2 * k, c);
-            return;
-        }
-        round(g, cx - radius, cy - radius, radius * 2, radius * 2, radius, c);
+        if (radius <= 0 || (c >>> 24) == 0) return;
+        if (radius < 2) { fill(g, cx - radius, cy - radius, radius * 2, radius * 2, c); return; }
+        int d = radius * 2;
+        Shapes.blit(g, Shapes.disk(radius), cx - radius, cy - radius, d, d, 0, 0, d, d, d, d, c);
     }
 
     static void hgrad(GuiGraphicsExtractor g, int x, int y, int w, int h, int c1, int c2) {
@@ -327,54 +261,134 @@ final class Draw {
         g.pose().popMatrix();
     }
 
-    /** Horizontal-gradient pill with rounded end caps: 3 draws (two caps + one gradient body). */
+    /** Horizontal-gradient pill: anti-aliased half-disk caps plus a gradient body, no overlap. */
     static void pillGrad(GuiGraphicsExtractor g, int x, int y, int w, int h, int c1, int c2) {
         if (w <= 0 || h <= 0) return;
-        if (FX < 2) { hgrad(g, x, y, w, h, c1, c2); return; }
         int r = h / 2;
+        if (r < 2) { hgrad(g, x, y, w, h, c1, c2); return; }
         if (w <= h) { round(g, x, y, w, h, r, c1); return; }
-        round(g, x, y, h, h, r, c1);
-        round(g, x + w - h, y, h, h, r, c2);
-        hgrad(g, x + r, y, w - h, h, lerp(c1, c2, r / (float) w), lerp(c1, c2, 1f - r / (float) w));
+        var disk = Shapes.disk(r);
+        int d = 2 * r;
+        Shapes.blit(g, disk, x, y, r, h, 0, 0, r, d, d, d, c1);
+        Shapes.blit(g, disk, x + w - r, y, r, h, r, 0, r, d, d, d, c2);
+        hgrad(g, x + r, y, w - 2 * r, h, lerp(c1, c2, r / (float) w), lerp(c1, c2, 1f - r / (float) w));
     }
 
+    /**
+     * iOS-style switch. {@code on} is the animated position (0..1); the knob stretches while it is
+     * travelling, which reads as a liquid drop rather than a sliding block.
+     */
     static void toggle(GuiGraphicsExtractor g, int x, int y, int w, int h, float on, int accent) {
-        round(g, x, y, w, h, h / 2, lerp(0xFF2B2B3F, accent, on));
-        int pad = Math.max(2, h / 6);
+        float p = Math.max(0f, Math.min(1f, on));
+        round(g, x, y, w, h, h / 2, lerp(0x2EFFFFFF, accent, p));
+        if (p > 0.01f && FANCY) round(g, x + S, y + S, w - 2 * S, h / 2 - S, h / 2 - S, alpha(0xFFFFFF, (int) (0x22 * p)), true, false);
+        int pad = Math.max(2, h / 9);
         int d = h - pad * 2;
-        int kx = x + pad + Math.round((w - h) * on);
-        round(g, kx, y + pad, d, d, d / 2, lerp(0xFFB5B8C8, 0xFFFFFFFF, on));
+        int stretch = Math.round((float) Math.sin(Math.PI * p) * d * 0.45f);
+        int kw = d + stretch;
+        int kx = x + pad + Math.round((w - 2 * pad - kw) * p);
+        if (FANCY) roundFast(g, kx - S, y + pad + S, kw + 2 * S, d + S, d / 2, 0x38000000);
+        round(g, kx, y + pad, kw, d, d / 2, 0xFFFFFFFF);
+        if (FANCY) round(g, kx + S, y + pad + d / 2, kw - 2 * S, d / 2 - S, d / 2, 0x14000000, false, true);
     }
 
+    /**
+     * Circular gauge: a faint full track plus an arc from 12 o'clock covering {@code frac}, shaded
+     * from c1 to c2, with a round cap. Built from short rotated segments.
+     */
+    static void ring(GuiGraphicsExtractor g, int cx, int cy, int radius, int thick, float frac, int track, int c1, int c2) {
+        if (radius < 2) return;
+        int d = radius * 2;
+        thick = Math.max(1, Math.min(thick, radius));
+        Shapes.blit(g, Shapes.ring(radius, thick), cx - radius, cy - radius, d, d, 0, 0, d, d, d, d, track);
+        int percent = Math.round(Math.max(0f, Math.min(1f, frac)) * 100);
+        if (percent <= 0) return;
+        int color = lerp(c1, c2, 0.5f + 0.5f * Math.min(1f, frac));
+        Shapes.blit(g, Shapes.arc(radius, thick, percent), cx - radius, cy - radius, d, d, 0, 0, d, d, d, d, color);
+    }
+
+    // ---------------------------------------------------------------- liquid glass
+
+    /**
+     * Alpha-safe rounded ring (no fill), brighter at the top than at the bottom like light catching
+     * the rim of a glass pane. Nothing overlaps, so translucent colors stay even.
+     */
+    static void outline(GuiGraphicsExtractor g, int x, int y, int w, int h, int r, int t, int top, int bottom) {
+        if (w <= 0 || h <= 0 || t <= 0) return;
+        r = Math.max(t, Math.min(r, Math.min(w, h) / 2));
+        if (r < 2) {
+            fill(g, x, y, w, t, top);
+            fill(g, x, y + h - t, w, t, bottom);
+            vgrad(g, x, y + t, t, h - 2 * t, top, bottom);
+            vgrad(g, x + w - t, y + t, t, h - 2 * t, top, bottom);
+            return;
+        }
+        var ring = Shapes.ring(r, t);
+        int d = 2 * r;
+        Shapes.blit(g, ring, x, y, r, r, 0, 0, r, r, d, d, top);
+        Shapes.blit(g, ring, x + w - r, y, r, r, r, 0, r, r, d, d, top);
+        Shapes.blit(g, ring, x, y + h - r, r, r, 0, r, r, r, d, d, bottom);
+        Shapes.blit(g, ring, x + w - r, y + h - r, r, r, r, r, r, r, d, d, bottom);
+        fill(g, x + r, y, w - 2 * r, t, top);
+        fill(g, x + r, y + h - t, w - 2 * r, t, bottom);
+        vgrad(g, x, y + r, t, h - 2 * r, top, bottom);
+        vgrad(g, x + w - t, y + r, t, h - 2 * r, top, bottom);
+    }
+
+    /** Soft drop shadow under a rounded panel. */
+    static void shadow(GuiGraphicsExtractor g, int x, int y, int w, int h, int r, int spread, int alphaMax) {
+        if (!FANCY || spread <= 0) return;
+        // CSS-style drop shadow: one blurred rounded rect, offset slightly down.
+        soft(g, x - spread, y - spread + spread / 3, w + 2 * spread, h + 2 * spread, r, spread * 2, alpha(0, alphaMax));
+    }
+
+    /**
+     * A liquid-glass pane: translucent body, specular sheen on the upper half, and a light rim.
+     * {@code body} should be translucent; the world behind the menu is already blurred.
+     */
+    static void glass(GuiGraphicsExtractor g, int x, int y, int w, int h, int r, int body, float lift) {
+        if (w <= 0 || h <= 0) return;
+        r = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+        round(g, x, y, w, h, r, body);
+        int t = Math.max(1, S / 2 + (S > 2 ? 1 : 0));
+        if (FANCY) {
+            // specular sheen: strongest at the top edge, fading out by ~45% of the height
+            int sheenA = Math.round(0x16 + 0x10 * lift);
+            round(g, x + t, y + t, w - 2 * t, Math.max(1, r - t), Math.max(0, r - t), alpha(0xFFFFFF, sheenA), true, false);
+            int fadeTop = y + r, fadeH = Math.max(0, Math.round(h * 0.45f) - r);
+            vgrad(g, x + t, fadeTop, w - 2 * t, fadeH, alpha(0xFFFFFF, sheenA), 0x00FFFFFF);
+        }
+        outline(g, x, y, w, h, r, t, alpha(0xFFFFFF, Math.round(0x3A + 0x30 * lift)), alpha(0xFFFFFF, Math.round(0x10 + 0x10 * lift)));
+    }
+
+    /**
+     * Glossy round badge (app-icon style): an accent disk with a soft capsule highlight across its top,
+     * all anti-aliased. {@code d} is the diameter.
+     */
+    static void bead(GuiGraphicsExtractor g, int x, int y, int d, int color) {
+        circle(g, x + d / 2, y + d / 2, d / 2, color);
+        int hw = Math.round(d * 0.62f), hh = Math.max(2, Math.round(d * 0.36f));
+        round(g, x + (d - hw) / 2, y + Math.max(1, Math.round(d * 0.08f)), hw, hh, hh / 2, 0x4CFFFFFF);
+    }
+
+    /** Glass pane tinted with a color (selected items, active states). */
+    static void glassTint(GuiGraphicsExtractor g, int x, int y, int w, int h, int r, int color, float strength) {
+        glass(g, x, y, w, h, r, alpha(color, Math.round(0x30 + 0x40 * strength)), 0.6f + 0.4f * strength);
+    }
+
+    /** Up/down chevron as an anti-aliased icon glyph. */
     static void chevron(GuiGraphicsExtractor g, int cx, int cy, int size, boolean up, int color) {
-        int t = Math.max(1, S);
-        int len = Math.round(size * 1.4142f) + t / 2;
-        int vy = up ? cy - size / 2 : cy + size / 2;
-        float a1 = (float) (up ? 3 * Math.PI / 4 : -3 * Math.PI / 4);
-        float a2 = (float) (up ? Math.PI / 4 : -Math.PI / 4);
-        arm(g, cx, vy, a1, len, t, color);
-        arm(g, cx, vy, a2, len, t, color);
-    }
-
-    private static void arm(GuiGraphicsExtractor g, int x, int y, float angle, int len, int t, int color) {
-        g.pose().pushMatrix();
-        g.pose().translate(x, y);
-        g.pose().rotate(angle);
-        g.fill(-t / 2, -t / 2, len, t - t / 2, color);
-        g.pose().popMatrix();
+        icon(g, cx, cy, up ? Icons.CHEVRON_UP : Icons.CHEVRON_DOWN, color);
     }
 
     // ---------------------------------------------------------------- effects
-    /** Soft, low-cost glow with a gradual alpha falloff toward its edge. */
+    /** Soft radial glow (a single smooth gradient, no banding). */
     static void glow(GuiGraphicsExtractor g, int cx, int cy, int radius, int color, int layers, int alphaPerLayer) {
-        if (!FANCY) return;
-        layers = Math.max(1, Math.min(layers, FX >= 2 ? 4 : 2));
-        int maxAlpha = Math.min(36, alphaPerLayer * 2);
-        for (int i = layers; i > 0; i--) {
-            int rr = Math.max(1, radius * i / layers);
-            int a = Math.max(1, maxAlpha * (layers - i + 1) / (layers * 2));
-            roundFast(g, cx - rr, cy - rr, rr * 2, rr * 2, rr, alpha(color, a));
-        }
+        if (!FANCY || radius <= 0) return;
+        // One smooth radial gradient instead of stacked layers (no banding, one draw).
+        int a = Math.min(90, Math.max(1, alphaPerLayer * Math.max(1, Math.min(layers, 4)) * 3 / 2));
+        int d = radius * 2;
+        Shapes.blit(g, Shapes.radial(), cx - radius, cy - radius, d, d, 0, 0, 128, 128, 128, 128, alpha(color, a));
     }
 
     /** Moving highlight: a horizontal streak centered at cx, clipped to [rx, rx+rw]. */
@@ -492,6 +506,27 @@ final class Draw {
         Component created = Component.literal(s).withStyle(st -> st.withColor(rgb).withFont(FONTS[scale]).withBold(bold));
         TEXT_CACHE.put(new TextKey(s, rgb, bold, scale), created);
         return created;
+    }
+
+    // ---------------------------------------------------------------- icons
+    /** Font Awesome glyph fonts, one per UI scale, rendered 1:1 like the text fonts. */
+    private static final FontDescription[] ICON_FONTS = new FontDescription[4];
+    static {
+        for (int i = 0; i < ICON_FONTS.length; i++) {
+            ICON_FONTS[i] = new FontDescription.Resource(Identifier.fromNamespaceAndPath("anthrax", "fa_" + (i + 1)));
+        }
+    }
+    private static final Map<TextKey, Component> ICON_CACHE = new HashMap<>();
+
+    /** Draws a Font Awesome glyph (see {@link Icons}) centered on (cx, cy). */
+    static void icon(GuiGraphicsExtractor g, int cx, int cy, String glyph, int color) {
+        int scale = Math.max(0, Math.min(S, ICON_FONTS.length) - 1);
+        int rgb = color & 0xFFFFFF;
+        Component c = ICON_CACHE.computeIfAbsent(new TextKey(glyph, rgb, false, scale),
+                k -> Component.literal(glyph).withStyle(st -> st.withColor(rgb).withFont(ICON_FONTS[scale])));
+        // Glyph boxes are ~8*S tall with the baseline 7 px below y (see draw); center them like text.
+        int y = cy - Math.round(BASELINE) + Math.round(0.42f * 8f * S);
+        g.textRenderer().accept(TextAlignment.CENTER, cx, y, c);
     }
 
     /** Set by the screen every frame; used to measure text. */

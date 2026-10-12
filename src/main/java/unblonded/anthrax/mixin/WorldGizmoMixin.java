@@ -11,6 +11,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import unblonded.anthrax.modules.FeatureManager;
 import unblonded.anthrax.modules.visual.BlockEspModule;
 import unblonded.anthrax.modules.visual.WorldThemeModule;
 import unblonded.anthrax.modules.mining.SeedRayModule;
@@ -22,12 +23,17 @@ public abstract class WorldGizmoMixin {
                                   CameraRenderState cameraState, Matrix4fc projection, GpuBufferSlice fogBuffer,
                                   Vector4f skyColor, boolean renderEntityOutline, CallbackInfo ci) {
         WorldThemeModule.tintSky(skyColor);
+        unblonded.anthrax.render.WorldProjection.capture(cameraState);
     }
 
     @Inject(method = "render", at = @At("HEAD"))
     private void anthrax$submitEspGizmos(CallbackInfo ci) {
+        FeatureManager.frame(net.minecraft.client.Minecraft.getInstance());
         BlockEspModule.renderGizmos((LevelRenderer) (Object) this);
         SeedRayModule.renderGizmos((LevelRenderer) (Object) this);
+        unblonded.anthrax.modules.world.BaseFinderModule.renderGizmos((LevelRenderer) (Object) this);
+        unblonded.anthrax.modules.world.WaypointsModule.renderGizmos((LevelRenderer) (Object) this);
+        unblonded.anthrax.modules.visual.WorldOverlays.render((LevelRenderer) (Object) this);
         WorldThemeModule.renderParticles((LevelRenderer) (Object) this);
     }
 }
