@@ -16,7 +16,7 @@ public final class HandRenderModule extends FeatureModule {
     private final Setting.Bool outline = setting(Setting.Bool.standalone("Hand and item outline", true));
     private final Setting.Bool outlineArm = setting(Setting.Bool.standalone("Outline arm", true));
     private final Setting.Bool outlineItems = setting(Setting.Bool.standalone("Outline held items", true));
-    private final Setting.Mode style = setting(Setting.Mode.standalone("Outline style", "Neon", "Neon", "Solid", "Soft", "Double"));
+    private final Setting.Mode style = setting(Setting.Mode.standalone("Outline style", "Neon", "Neon", "Solid", "Soft", "Double"), "Neon is a glow with a bright core, Solid one clean line, Soft glow only, Double a two-tone stripe.");
     private final Setting.Mode outlineColor = setting(Setting.Mode.standalone("Outline color", "Rainbow",
             "Rainbow", "Gradient", "Custom", "Theme", "Fire", "Toxic", "Vaporwave", "Ocean", "Ice", "White"));
     private final Setting.Num hue = setting(Setting.Num.standalone("Custom hue", 285, 0, 360, 1));
@@ -24,15 +24,15 @@ public final class HandRenderModule extends FeatureModule {
     private final Setting.Num saturation = setting(Setting.Num.standalone("Saturation", 95, 0, 100, 1));
     private final Setting.Num brightness = setting(Setting.Num.standalone("Brightness", 62, 20, 90, 1));
     private final Setting.Num speed = setting(Setting.Num.standalone("Color speed", 1, 0, 5, .05));
-    private final Setting.Num spread = setting(Setting.Num.standalone("Color spread", 1.2, 0, 6, .05));
+    private final Setting.Num spread = setting(Setting.Num.standalone("Color spread", 1.2, 0, 6, .05), "How much the colors change along the outline. 0 makes the whole outline one color.");
     private final Setting.Num width = setting(Setting.Num.standalone("Line width", 1.6, .5, 8, .1));
     private final Setting.Num glow = setting(Setting.Num.standalone("Glow strength", 70, 0, 100, 5));
-    private final Setting.Num glowSize = setting(Setting.Num.standalone("Glow size", 1, .2, 3, .05));
-    private final Setting.Num core = setting(Setting.Num.standalone("White core", 55, 0, 100, 5));
-    private final Setting.Bool glint = setting(Setting.Bool.standalone("Glint sweep", true));
+    private final Setting.Num glowSize = setting(Setting.Num.standalone("Glow size", 1, .2, 3, .05), "How far the glow reaches out from the line.");
+    private final Setting.Num core = setting(Setting.Num.standalone("White core", 55, 0, 100, 5), "How white the centre line of the Neon style is.");
+    private final Setting.Bool glint = setting(Setting.Bool.standalone("Glint sweep", true), "A bright band that passes across the outline now and then.");
     private final Setting.Num glintSpeed = setting(Setting.Num.standalone("Glint speed", 1, .1, 4, .05));
     private final Setting.Num glintWidth = setting(Setting.Num.standalone("Glint width", .18, .04, .6, .01));
-    private final Setting.Num pulse = setting(Setting.Num.standalone("Pulse amount", 0, 0, 100, 5));
+    private final Setting.Num pulse = setting(Setting.Num.standalone("Pulse amount", 0, 0, 100, 5), "Makes the outline breathe in width and glow.");
     private final Setting.Num pulseSpeed = setting(Setting.Num.standalone("Pulse speed", 1.5, .1, 6, .05));
 
     private HandRenderModule() { super("Hand Render", "Scale, move, pose and outline the first-person hand", "Visuals", true); }

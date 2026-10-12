@@ -11,8 +11,8 @@ import java.util.concurrent.ThreadLocalRandom;
 /** Attacks whatever your crosshair is on the moment your cooldown is ready (legit-looking aura). */
 public final class TriggerBotModule extends FeatureModule {
     private final Setting.Num cooldown = setting(Setting.Num.standalone("Cooldown %", 95, 10, 100, 1));
-    private final Setting.Num minDelay = setting(Setting.Num.standalone("Min reaction (ms)", 40, 0, 300, 5));
-    private final Setting.Num maxDelay = setting(Setting.Num.standalone("Max reaction (ms)", 90, 0, 400, 5));
+    private final Setting.Num minDelay = setting(Setting.Num.standalone("Min reaction (ms)", 40, 0, 300, 5), "Shortest wait between the target entering your crosshair and the swing.");
+    private final Setting.Num maxDelay = setting(Setting.Num.standalone("Max reaction (ms)", 90, 0, 400, 5), "Longest wait; the delay is picked randomly between min and max.");
     private final Setting.Bool crits = setting(Setting.Bool.standalone("Wait for crits", true));
     private final Setting.Bool players = setting(Setting.Bool.standalone("Players", true));
     private final Setting.Bool hostiles = setting(Setting.Bool.standalone("Hostile mobs", true));

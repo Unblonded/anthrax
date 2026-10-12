@@ -15,9 +15,9 @@ public final class CrystalAuraModule extends FeatureModule {
     private static final int MAX_STEPS = 20;     // max steps before force finish
     private static final double REACH_SQ = 4.5 * 4.5;
 
-    private final Setting.Num smoothing = setting(Setting.Num.standalone("Smoothing", 0.18, 0.05, 0.8, 0.01));
-    private final Setting.Num stepMs = setting(Setting.Num.standalone("Step interval", 2, 1, 20, 1));
-    private final Setting.Num placementDelay = setting(Setting.Num.standalone("Placement delay", 2, 0, 10, 1));
+    private final Setting.Num smoothing = setting(Setting.Num.standalone("Smoothing", 0.18, 0.05, 0.8, 0.01), "How much of the remaining turn is done each step. Lower is smoother but slower.");
+    private final Setting.Num stepMs = setting(Setting.Num.standalone("Step interval", 2, 1, 20, 1), "Milliseconds between rotation steps.");
+    private final Setting.Num placementDelay = setting(Setting.Num.standalone("Placement delay", 2, 0, 10, 1), "Ticks to wait after placing before turning onto the crystal.");
 
     private static final int WAIT_TIMEOUT_TICKS = 20;
     private boolean waitingForCrystal = false;

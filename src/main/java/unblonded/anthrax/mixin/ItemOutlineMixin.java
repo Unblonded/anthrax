@@ -21,6 +21,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import unblonded.anthrax.modules.visual.HandRenderModule;
+import unblonded.anthrax.modules.Safe;
 import unblonded.anthrax.render.Glow;
 
 import java.util.ArrayList;
@@ -39,6 +40,14 @@ public abstract class ItemOutlineMixin {
             shift = At.Shift.AFTER))
     private void anthrax$outlineModel(PoseStack pose, SubmitNodeCollector collector, int light, int overlay,
                                      int color, CallbackInfo ci) {
+        try {
+            anthrax$outline(pose, collector);
+        } catch (RuntimeException e) {
+            Safe.fail(HandRenderModule.INSTANCE, "Hand Render", e);
+        }
+    }
+
+    private void anthrax$outline(PoseStack pose, SubmitNodeCollector collector) {
         HandRenderModule module = HandRenderModule.INSTANCE;
         ItemDisplayContext context = ((ItemStackRenderStateAccessor) (Object) this$0).anthrax$getDisplayContext();
         if (!module.outlineItems() || context != ItemDisplayContext.FIRST_PERSON_RIGHT_HAND
@@ -84,9 +93,9 @@ public abstract class ItemOutlineMixin {
             }
             List<Edge> spriteSilhouette = spriteContour(faces.get(0), mask(sprites));
             if (spriteSilhouette.isEmpty()) return;
-            collector.submitCustomGeometry(pose, RenderTypes.linesTranslucent(), (matrix, out) -> {
+            collector.submitCustomGeometry(pose, RenderTypes.linesTranslucent(), (matrix, out) -> Safe.run("Hand Render outline", () -> {
                 for (Edge edge : spriteSilhouette) line(matrix, out, edge.a, edge.b);
-            });
+            }));
             return;
         }
 
@@ -107,9 +116,9 @@ public abstract class ItemOutlineMixin {
         }
         if (silhouette.isEmpty()) return;
 
-        collector.submitCustomGeometry(pose, RenderTypes.linesTranslucent(), (matrix, out) -> {
+        collector.submitCustomGeometry(pose, RenderTypes.linesTranslucent(), (matrix, out) -> Safe.run("Hand Render outline", () -> {
             for (Edge edge : silhouette) line(matrix, out, edge.a, edge.b);
-        });
+        }));
     }
 
     /** How much a face points at the eye (view-space origin): 1 straight at it, 0 edge-on, negative away. */

@@ -10,6 +10,8 @@ import java.util.Map;
 public final class GuiPreferences {
     private static String lastCategory = "";
     private static boolean separateCategoryWindows;
+    /** Set once the first-run tour has been finished or skipped. */
+    private static boolean onboarded;
     private static final Map<String, double[]> windowPositions = new LinkedHashMap<>();
     /** Window sizes in design units (pixels / Draw.S), so they survive GUI-scale changes. */
     private static final Map<String, int[]> windowSizes = new LinkedHashMap<>();
@@ -33,6 +35,7 @@ public final class GuiPreferences {
         Draw.setFx(fx);
         lastCategory = properties.getProperty("gui.lastCategory", "");
         separateCategoryWindows = Boolean.parseBoolean(properties.getProperty("gui.separateCategoryWindows", "false"));
+        onboarded = Boolean.parseBoolean(properties.getProperty("gui.onboarded", "false"));
         windowPositions.clear();
         windowSizes.clear();
         collapsed.clear();
@@ -52,6 +55,9 @@ public final class GuiPreferences {
                 }
             } catch (RuntimeException ignored) {}
         }
+        // the Storage Scan box used its own key before the shared HUD layout existed
+        if (!windowPositions.containsKey("hud:scanbox") && windowPositions.containsKey("__storage_scan_box"))
+            windowPositions.put("hud:scanbox", windowPositions.remove("__storage_scan_box"));
         windowOrder.clear();
         for (String name : properties.getProperty("gui.windowOrder", "").split("\\|")) if (!name.isEmpty()) windowOrder.add(name);
         openCards.clear();
@@ -75,6 +81,7 @@ public final class GuiPreferences {
         values.put("gui.antialias", Boolean.toString(Draw.AA));
         values.put("gui.lastCategory", lastCategory);
         values.put("gui.separateCategoryWindows", Boolean.toString(separateCategoryWindows));
+        values.put("gui.onboarded", Boolean.toString(onboarded));
         windowPositions.forEach((name, position) -> values.put(windowKey(name), position[0] + "," + position[1]));
         windowSizes.forEach((name, size) -> values.put(key("gui.size.", name), size[0] + "," + size[1]));
         for (String name : collapsed) values.put(key("gui.collapsed.", name), "true");
@@ -82,6 +89,8 @@ public final class GuiPreferences {
         values.put("gui.openCards", String.join("|", openCards));
     }
 
+    public static boolean onboarded() { return onboarded; }
+    public static void setOnboarded(boolean value) { onboarded = value; }
     public static String lastCategory() { return lastCategory; }
     public static void setLastCategory(String category) { lastCategory = category == null ? "" : category; }
     public static boolean separateCategoryWindows() { return separateCategoryWindows; }

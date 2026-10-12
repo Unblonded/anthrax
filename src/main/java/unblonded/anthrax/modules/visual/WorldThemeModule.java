@@ -74,20 +74,20 @@ public final class WorldThemeModule extends FeatureModule {
         boolean changed = !v.equals(look[0]);
         look[0] = v;
         if (changed) applyLook(v);
-    }));
+    }), "Pick a ready-made look; it sets every other setting here to a calm combination. Custom changes nothing.");
 
     private final Setting.Mode theme = setting(Setting.Mode.standalone("World theme", "Liquid Glass",
             PRESETS.stream().map(Preset::name).toArray(String[]::new)));
-    private final Setting.Mode colorMode = setting(Setting.Mode.standalone("Color mode", "Theme", "Theme", "Spectrum", "Aurora"));
-    private final Setting.Num strength = setting(Setting.Num.standalone("Effect strength", 38, 0, 100, 1));
-    private final Setting.Bool presetEffects = setting(Setting.Bool.standalone("Theme effects", true));
+    private final Setting.Mode colorMode = setting(Setting.Mode.standalone("Color mode", "Theme", "Theme", "Spectrum", "Aurora"), "Theme uses the theme's colors; Spectrum and Aurora cycle through colors over time.");
+    private final Setting.Num strength = setting(Setting.Num.standalone("Effect strength", 38, 0, 100, 1), "How strong the color grade, tints and effects are.");
+    private final Setting.Bool presetEffects = setting(Setting.Bool.standalone("Theme effects", true), "The world effects that come with the chosen theme. Turn off to use only your + extras.");
 
     // screen
     private final Setting.Mode grade = setting(Setting.Mode.standalone("Color grade", "Theme",
             "Theme", "Neon", "Noir", "Sepia", "Teal & Orange", "Vapor", "Bleach"));
     private final Setting.Bool screenGrade = setting(Setting.Bool.standalone("Screen color grade", true));
     private final Setting.Bool skyFog = setting(Setting.Bool.standalone("Tint sky and fog", true));
-    private final Setting.Num darkness = setting(Setting.Num.standalone("Darkness", 68, 0, 100, 1));
+    private final Setting.Num darkness = setting(Setting.Num.standalone("Darkness", 68, 0, 100, 1), "Darkens the world for themes that use it.");
     private final Setting.Bool vignette = setting(Setting.Bool.standalone("Vignette", true));
     private final Setting.Bool scanlines = setting(Setting.Bool.standalone("Scanlines", false));
     private final Setting.Bool grain = setting(Setting.Bool.standalone("Film grain", false));
@@ -203,7 +203,7 @@ public final class WorldThemeModule extends FeatureModule {
         HudElementRegistry.addFirst(Identifier.fromNamespaceAndPath("anthrax", "world_theme_grade"), (graphics, delta) -> {
             Minecraft client = Minecraft.getInstance();
             if (!isEnabled() || client.player == null || client.gui.screen() != null) return;
-            screenPass(graphics, client.getWindow().getGuiScaledWidth(), client.getWindow().getGuiScaledHeight());
+            unblonded.anthrax.modules.Safe.run(this, () -> screenPass(graphics, client.getWindow().getGuiScaledWidth(), client.getWindow().getGuiScaledHeight()));
         });
     }
 

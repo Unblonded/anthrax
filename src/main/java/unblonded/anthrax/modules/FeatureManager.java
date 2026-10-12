@@ -29,26 +29,14 @@ public final class FeatureManager {
         lastFrameNs = now;
         for (FeatureModule feature : FEATURES) {
             if (!feature.isEnabled()) continue;
-            try {
-                feature.frame(client, dt);
-            } catch (RuntimeException exception) {
-                try { feature.setEnabled(false); }
-                catch (RuntimeException toggleFailure) { exception.addSuppressed(toggleFailure); }
-                LOGGER.error("Disabled feature '{}' after a frame failure", feature.name, exception);
-            }
+            Safe.run(feature, () -> feature.frame(client, dt));
         }
     }
 
     public static void tick(Minecraft client) {
         for (FeatureModule feature : FEATURES) {
             if (!feature.isEnabled()) continue;
-            try {
-                feature.tick(client);
-            } catch (RuntimeException exception) {
-                try { feature.setEnabled(false); }
-                catch (RuntimeException toggleFailure) { exception.addSuppressed(toggleFailure); }
-                LOGGER.error("Disabled feature '{}' after a client tick failure", feature.name, exception);
-            }
+            Safe.run(feature, () -> feature.tick(client));
         }
     }
 }

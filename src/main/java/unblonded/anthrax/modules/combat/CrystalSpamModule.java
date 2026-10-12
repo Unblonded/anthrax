@@ -18,8 +18,8 @@ import unblonded.anthrax.modules.Setting;
 
 /** Repeats crystal placement and attack at the nearest valid base while holding crystals. */
 public final class CrystalSpamModule extends FeatureModule {
-    private final Setting.Num radius = setting(Setting.Num.standalone("Search radius", 5, 1, 6, 1));
-    private final Setting.Num breakDelay = setting(Setting.Num.standalone("Break delay (ms)", 10, 1, 1000, 1));
+    private final Setting.Num radius = setting(Setting.Num.standalone("Search radius", 5, 1, 6, 1), "How far around you to look for obsidian or bedrock to place on (always kept within reach).");
+    private final Setting.Num breakDelay = setting(Setting.Num.standalone("Break delay (ms)", 10, 1, 1000, 1), "Pause before breaking each placed crystal.");
     private long nextAction;
     private BlockPos pendingBase;
     private boolean waitingForCrystal;

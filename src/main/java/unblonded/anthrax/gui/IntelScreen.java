@@ -40,10 +40,15 @@ public final class IntelScreen extends Screen {
 
     private final List<Hit> hits = new ArrayList<>();
     private boolean structuresTab;
+    /** The Map tab; static so the Intel screen reopens on it. */
+    private static boolean mapTab;
+    private boolean mapPressed, mapMoved;
+    private int mapButton;
+    private double mapPressX, mapPressY;
     private int selected;
     private float listScroll, listScrollTarget, detailScroll, detailScrollTarget, detailHeight;
     private int listX, listY, listW, listH, detailX, detailY, detailW, detailH;
-    private float gs = 1, uiScale = 1;
+    private float gs = 1;
     private int mx, my;
     private long lastNs = System.nanoTime();
     private final long openNs = System.nanoTime();
@@ -65,17 +70,16 @@ public final class IntelScreen extends Screen {
     public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float delta) {
         Draw.measureFont = font;
         gs = (float) minecraft.getWindow().getGuiScale();
-        uiScale = FontSizeModule.scale();
-        int pw = Math.round(width * gs / uiScale), ph = Math.round(height * gs / uiScale);
-        mx = Math.round(mouseX * gs / uiScale);
-        my = Math.round(mouseY * gs / uiScale);
+        int pw = Math.round(width * gs), ph = Math.round(height * gs);
+        mx = Math.round(mouseX * gs);
+        my = Math.round(mouseY * gs);
         long now = System.nanoTime();
         float dt = Math.min(0.05f, (now - lastNs) / 1e9f);
         lastNs = now;
         Theme.tick(System.currentTimeMillis());
-        Draw.S = Math.max(1, Math.min(4, Math.min(Math.round(ph / 720f), Math.min(pw / 660, ph / 420))));
+        Draw.S = FontSizeModule.apply(Math.min(Math.round(ph / 720f), Math.min(pw / 660, ph / 420)));
         g.pose().pushMatrix();
-        g.pose().scale(uiScale / gs, uiScale / gs);
+        g.pose().scale(1f / gs, 1f / gs);
         try {
             hits.clear();
             hintText = null;
@@ -120,15 +124,22 @@ public final class IntelScreen extends Screen {
                 : "Base Finder is off: enable it to start scanning";
         text(g, bx + bead + u(10), cy + u(8), sub, finder.isEnabled() ? Theme.MUTED : 0xFFFFC94A, false);
 
-        int segW = u(200), segH = u(26), segX = wx + ww - u(16) - u(26) - u(10) - segW;
-        segmented(g, segX, cy - segH / 2, segW, segH, "Bases  " + bases.size(), "Structures  " + pois.size(), structuresTab, accent,
-                tab -> { structuresTab = tab == 1; selected = 0; listScrollTarget = 0; detailScrollTarget = 0; });
+        int segW = u(300), segH = u(26), segX = wx + ww - u(16) - u(26) - u(10) - segW;
+        segmented(g, segX, cy - segH / 2, segW, segH,
+                new String[]{"Bases  " + bases.size(), "Structures  " + pois.size(), "Map"}, mapTab ? 2 : structuresTab ? 1 : 0, accent,
+                tab -> { mapTab = tab == 2; structuresTab = tab == 1; selected = 0; listScrollTarget = 0; detailScrollTarget = 0; });
         int close = u(26), closeX = wx + ww - u(16) - close;
         boolean closeHov = inside(mx, my, closeX, cy - close / 2, close, close);
         glass(g, closeX, cy - close / 2, close, close, close / 2, closeHov ? alpha(Theme.DANGER, 0x90) : 0x14FFFFFF, closeHov ? 1 : .4f);
         icon(g, closeX + close / 2, cy, Icons.XMARK, closeHov ? 0xFFFFFFFF : Theme.SUBTEXT);
         hits.add(new Hit(closeX, cy - close / 2, close, close, b -> onClose()));
         fill(g, wx + r, wy + headH, ww - 2 * r, Math.max(1, S / 2), 0x16FFFFFF);
+
+        if (mapTab) {
+            IntelMap.draw(g, wx + u(12), wy + headH + u(10), ww - u(24), wh - headH - u(22), mx, my, accent,
+                    (hx, hy, hw, hh, press) -> hits.add(new Hit(hx, hy, hw, hh, press)), dt);
+            return;
+        }
 
         // ---- list
         listX = wx + u(12); listY = wy + headH + u(10); listW = u(230); listH = wh - headH - u(22);
@@ -170,15 +181,22 @@ public final class IntelScreen extends Screen {
         }
     }
 
-    private void segmented(GuiGraphicsExtractor g, int x, int y, int w, int h, String a, String b, boolean second, int accent, IntConsumer pick) {
+    private final float[] segAnim = {-1};
+
+    /** Pill tab control; the highlight glides between options. */
+    private void segmented(GuiGraphicsExtractor g, int x, int y, int w, int h, String[] labels, int current, int accent, IntConsumer pick) {
         round(g, x, y, w, h, h / 2, 0x30000000);
         outline(g, x, y, w, h, h / 2, Math.max(1, S / 2), 0x14FFFFFF, 0x22FFFFFF);
-        int half = w / 2;
-        glassTint(g, x + (second ? half : 0) + S, y + S, half - 2 * S, h - 2 * S, (h - 2 * S) / 2, accent, .65f);
-        textC(g, x + half / 2, y + h / 2, a, !second ? 0xFFFFFFFF : Theme.MUTED, !second);
-        textC(g, x + half + half / 2, y + h / 2, b, second ? 0xFFFFFFFF : Theme.MUTED, second);
-        hits.add(new Hit(x, y, half, h, btn -> pick.accept(0)));
-        hits.add(new Hit(x + half, y, half, h, btn -> pick.accept(1)));
+        int n = labels.length, part = w / n;
+        if (segAnim[0] < 0) segAnim[0] = current;
+        segAnim[0] += (current - segAnim[0]) * .25f;
+        glassTint(g, x + Math.round(segAnim[0] * part) + S, y + S, part - 2 * S, h - 2 * S, (h - 2 * S) / 2, accent, .65f);
+        for (int i = 0; i < n; i++) {
+            boolean on = i == current;
+            textC(g, x + i * part + part / 2, y + h / 2, labels[i], on ? 0xFFFFFFFF : Theme.MUTED, on);
+            final int idx = i;
+            hits.add(new Hit(x + i * part, y, part, h, btn -> pick.accept(idx)));
+        }
     }
 
     private void drawList(GuiGraphicsExtractor g, List<Base> bases, List<Poi> pois, float dt, int accent) {
@@ -428,17 +446,51 @@ public final class IntelScreen extends Screen {
     // ------------------------------------------------------------------ input
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-        int px = Math.round((float) event.x() * gs / uiScale), py = Math.round((float) event.y() * gs / uiScale);
+        int px = Math.round((float) event.x() * gs), py = Math.round((float) event.y() * gs);
         for (int i = hits.size() - 1; i >= 0; i--) {
             Hit h = hits.get(i);
             if (h.contains(px, py)) { h.press().accept(event.button()); return true; }
+        }
+        if (mapTab && IntelMap.contains(px, py)) {
+            // decide on release whether this was a click on a marker or a drag of the map
+            mapPressed = true;
+            mapMoved = false;
+            mapButton = event.button();
+            mapPressX = px;
+            mapPressY = py;
+            return true;
         }
         return super.mouseClicked(event, doubleClick);
     }
 
     @Override
+    public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+        if (mapPressed) {
+            double px = event.x() * gs, py = event.y() * gs;
+            if (Math.abs(px - mapPressX) + Math.abs(py - mapPressY) > u(4)) mapMoved = true;
+            if (mapMoved) IntelMap.drag(dragX * gs, dragY * gs);
+            return true;
+        }
+        return super.mouseDragged(event, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        if (mapPressed) {
+            mapPressed = false;
+            if (!mapMoved) IntelMap.click((int) Math.round(mapPressX), (int) Math.round(mapPressY), mapButton);
+            return true;
+        }
+        return super.mouseReleased(event);
+    }
+
+    @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-        int px = Math.round((float) mouseX * gs / uiScale), py = Math.round((float) mouseY * gs / uiScale);
+        int px = Math.round((float) mouseX * gs), py = Math.round((float) mouseY * gs);
+        if (mapTab) {
+            if (IntelMap.contains(px, py)) IntelMap.scroll(px, py, scrollY);
+            return true;
+        }
         if (inside(px, py, listX, listY, listW, listH)) listScrollTarget -= (float) scrollY * u(48);
         else detailScrollTarget -= (float) scrollY * u(48);
         return true;
@@ -454,7 +506,14 @@ public final class IntelScreen extends Screen {
             if (!structuresTab && selected < bases.size()) selectedBaseId = bases.get(selected).id;
             return true;
         }
-        if (key == GLFW.GLFW_KEY_TAB) { structuresTab = !structuresTab; selected = 0; return true; }
+        if (key == GLFW.GLFW_KEY_TAB) {
+            // Bases -> Structures -> Map
+            if (mapTab) { mapTab = false; structuresTab = false; }
+            else if (structuresTab) mapTab = true;
+            else structuresTab = true;
+            selected = 0;
+            return true;
+        }
         if (Anthrax.intelKey != null && Anthrax.intelKey.matches(event)) { onClose(); return true; }
         return super.keyPressed(event);
     }

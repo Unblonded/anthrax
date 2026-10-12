@@ -69,7 +69,10 @@ public final class Hud {
         int[] size = HudLayout.size(id);
         boolean moved = HudLayout.hasSaved(id);
         int[] at = HudLayout.place(id, size[0], size[1], pw, ph, defX, defY);
-        int[] drawn = painter.paint(at[0], at[1], size[0], size[1]);
+        int[][] out = new int[1][];
+        // a failing block is skipped (and reported once) instead of crashing the whole HUD
+        unblonded.anthrax.modules.Safe.run(HudLayout.element(id).label(), () -> out[0] = painter.paint(at[0], at[1], size[0], size[1]));
+        int[] drawn = out[0];
         if (drawn == null || drawn[0] <= 0 || drawn[1] <= 0) return defY;
         HudLayout.record(id, at[0], at[1], drawn[0], drawn[1]);
         return moved ? defY : defY + drawn[1] + gap;

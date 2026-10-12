@@ -13,6 +13,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import unblonded.anthrax.modules.visual.HandRenderModule;
+import unblonded.anthrax.modules.Safe;
 import unblonded.anthrax.render.Glow;
 
 import java.util.ArrayList;
@@ -35,6 +36,14 @@ public abstract class AvatarHandOutlineMixin {
                                    RenderType renderType, int light, int overlay, TextureAtlasSprite sprite) {
         collector.submitModelPart(part, pose, renderType, light, overlay, sprite);
         if (!HandRenderModule.INSTANCE.outlineArm() || !part.visible) return;
+        try {
+            anthrax$outline(collector, part, pose);
+        } catch (RuntimeException e) {
+            Safe.fail(HandRenderModule.INSTANCE, "Hand Render", e);
+        }
+    }
+
+    private void anthrax$outline(SubmitNodeCollector collector, ModelPart part, PoseStack pose) {
 
         // Gather (pose, cube) pairs for the outermost layer.
         List<Matrix4f> poses = new ArrayList<>();
@@ -90,12 +99,12 @@ public abstract class AvatarHandOutlineMixin {
         }
         if (silhouette.isEmpty()) return;
         // Points are already in view space, so draw with an identity pose.
-        collector.submitCustomGeometry(new PoseStack(), RenderTypes.linesTranslucent(), (matrix, out) -> {
+        collector.submitCustomGeometry(new PoseStack(), RenderTypes.linesTranslucent(), (matrix, out) -> Safe.run("Hand Render outline", () -> {
             for (Edge e : silhouette) {
                 Glow.segment(matrix, out, e.ax / QUANT, e.ay / QUANT, e.az / QUANT,
                         e.bx / QUANT, e.by / QUANT, e.bz / QUANT);
             }
-        });
+        }));
     }
 
     private record Edge(long ax, long ay, long az, long bx, long by, long bz) {

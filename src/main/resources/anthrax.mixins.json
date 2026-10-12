@@ -36,6 +36,7 @@
     "MouseScrollMixin",
     "MouseButtonMixin",
     "ServerTeleportMixin",
+    "NewChunksMixin",
     "CommandSuggestionsMixin",
     "CombatHooksMixin",
     "VelocityMixin",

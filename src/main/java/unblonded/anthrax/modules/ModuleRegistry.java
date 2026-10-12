@@ -90,6 +90,7 @@ public final class ModuleRegistry {
         addFeature(unblonded.anthrax.modules.visual.ZoomModule.INSTANCE);
         addFeature(PlayerListModule.INSTANCE);
         addFeature(WorldThemeModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.world.NewChunksModule.INSTANCE);
         addFeature(TimeChangerModule.INSTANCE);
         addFeature(CosmicCrosshairModule.INSTANCE);
         addFeature(NoRenderModule.INSTANCE);

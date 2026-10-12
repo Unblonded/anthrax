@@ -12,6 +12,8 @@ import java.math.RoundingMode;
  */
 public abstract class Setting {
     public final String name;
+    /** Optional one-line explanation shown when hovering the setting in the menu. */
+    public String description;
 
     protected Setting(String name) {
         this.name = name;

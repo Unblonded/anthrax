@@ -182,6 +182,9 @@ public final class Commands {
         alias("cfg", profile);
 
         DISPATCHER.register(lit("panic").executes(does(c -> panic())));
+        // runs after the chat screen has closed, so the list screen is not replaced straight away
+        DISPATCHER.register(lit("chunks").executes(does(c -> Minecraft.getInstance().execute(() ->
+                Minecraft.getInstance().gui.setScreen(new unblonded.anthrax.gui.ChunkListScreen())))));
         DISPATCHER.register(lit("coords").executes(does(c -> coords())));
         DISPATCHER.register(lit("prefix").then(arg("symbol", StringArgumentType.word()).executes(does(c -> prefix(str(c, "symbol"))))));
 
@@ -204,6 +207,7 @@ public final class Commands {
         line(p + "modules", "list modules");
         line(p + "coords", "copy your coordinates");
         line(p + "panic", "disable every module");
+        line(p + "chunks", "open the New Chunks list");
         line(p + "prefix <symbol>", "change the command prefix");
         line(p + "testbuild <" + TestStructures.names().replace(", ", "|") + ">", "singleplayer test sites");
     }

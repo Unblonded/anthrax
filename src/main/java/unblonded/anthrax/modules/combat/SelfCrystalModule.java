@@ -19,8 +19,8 @@ import net.minecraft.world.entity.player.Player;
 
 /** Tracks crystal placements and attacks crystals that appear at those positions. */
 public final class SelfCrystalModule extends FeatureModule {
-    private final Setting.Num delay = setting(Setting.Num.standalone("Delay (ms)", 15, 1, 300, 1));
-    private final Setting.Num humanity = setting(Setting.Num.standalone("Humanity (ms)", 3, 0, 100, 1));
+    private final Setting.Num delay = setting(Setting.Num.standalone("Delay (ms)", 15, 1, 300, 1), "Pause after your crystal appears before it is broken.");
+    private final Setting.Num humanity = setting(Setting.Num.standalone("Humanity (ms)", 3, 0, 100, 1), "Random extra delay added each time.");
     private final Map<BlockPos, Long> pending = new LinkedHashMap<>();
     private ClientLevel pendingLevel;
     private Player owner;

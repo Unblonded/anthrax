@@ -129,12 +129,12 @@ public final class BaseFinderModule extends FeatureModule {
     }
 
     // ---- detection
-    private final Setting.Mode sensitivity = setting(Setting.Mode.standalone("Sensitivity", "Balanced", "Low", "Balanced", "High", "Paranoid"));
-    private final Setting.Num minBase = setting(Setting.Num.standalone("Min base score", 120, 30, 1500, 10));
-    private final Setting.Bool ignoreNatural = setting(Setting.Bool.standalone("Ignore natural structures", true));
-    private final Setting.Num scanSpeed = setting(Setting.Num.standalone("Scan speed (chunks/tick)", 4, 1, 24, 1));
-    private final Setting.Bool multithreaded = setting(Setting.Bool.standalone("Multithreaded scanning", true));
-    private final Setting.Bool rescanOnTeleport = setting(Setting.Bool.standalone("Clear and rescan on teleport", true));
+    private final Setting.Mode sensitivity = setting(Setting.Mode.standalone("Sensitivity", "Balanced", "Low", "Balanced", "High", "Paranoid"), "How readily a chunk counts as player activity. Higher finds more but also more false finds.");
+    private final Setting.Num minBase = setting(Setting.Num.standalone("Min base score", 120, 30, 1500, 10), "Evidence needed before a group of chunks is reported as a base.");
+    private final Setting.Bool ignoreNatural = setting(Setting.Bool.standalone("Ignore natural structures", true), "Don't count blocks a village, mineshaft, stronghold and similar would explain.");
+    private final Setting.Num scanSpeed = setting(Setting.Num.standalone("Scan speed (chunks/tick)", 4, 1, 24, 1), "How many loaded chunks are analysed per tick. Lower if you see stutter.");
+    private final Setting.Bool multithreaded = setting(Setting.Bool.standalone("Multithreaded scanning", true), "Analyse chunks on background threads.");
+    private final Setting.Bool rescanOnTeleport = setting(Setting.Bool.standalone("Clear and rescan on teleport", true), "Start fresh when you teleport far away.");
     // ---- what counts
     private final Setting.Bool useStorage = setting(Setting.Bool.standalone("Detect storage", true));
     private final Setting.Bool useValuables = setting(Setting.Bool.standalone("Detect valuables", true));
@@ -143,8 +143,8 @@ public final class BaseFinderModule extends FeatureModule {
     private final Setting.Bool useBuilds = setting(Setting.Bool.standalone("Detect builds", true));
     private final Setting.Bool useFarms = setting(Setting.Bool.standalone("Detect farms", true));
     private final Setting.Bool useActivity = setting(Setting.Bool.standalone("Detect torches and paths", true));
-    private final Setting.Bool useAmethyst = setting(Setting.Bool.standalone("Amethyst growth evidence", true));
-    private final Setting.Bool seedMining = setting(Setting.Bool.standalone("Mined-out ores from seed", true));
+    private final Setting.Bool useAmethyst = setting(Setting.Bool.standalone("Amethyst growth evidence", true), "Fully grown amethyst means players spent hours nearby; count it as activity.");
+    private final Setting.Bool seedMining = setting(Setting.Bool.standalone("Mined-out ores from seed", true), "With the world seed (Seed-Ray), count ores the seed predicts that are now gone.");
     // ---- display
     private final Setting.Bool beams = setting(Setting.Bool.standalone("Beacon beams", true));
     private final Setting.Bool outlines = setting(Setting.Bool.standalone("Area outlines", true));
@@ -1055,6 +1055,20 @@ public final class BaseFinderModule extends FeatureModule {
         if (storage > 0.4f) return "Storage";
         return "Player activity";
     }
+
+    /** A base from the persistent log (any session) for the current server and dimension. */
+    public record LoggedBase(String time, String type, int color, int x, int y, int z, int score, int confidence, String summary) {}
+
+    /** Every base ever logged on this server and dimension, oldest first. */
+    public static List<LoggedBase> history() {
+        List<LoggedBase> out = new ArrayList<>();
+        for (BaseLog.Entry e : BaseLog.history(Minecraft.getInstance().level))
+            out.add(new LoggedBase(e.time(), e.type(), typeColor(e.type()), e.x(), e.y(), e.z(), e.score(), e.confidence(), e.summary()));
+        return out;
+    }
+
+    /** Marker color for a base type, shared by the HUD, world markers and the Intel map. */
+    public static int colorOf(String type) { return typeColor(type); }
 
     private static int typeColor(String type) {
         return switch (type) {

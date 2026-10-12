@@ -21,8 +21,8 @@ import unblonded.anthrax.modules.Setting;
 
 /** Packet Edit's attack-triggered crystal placement and detonation flow. */
 public final class AutoCrystalModule extends FeatureModule {
-    private final Setting.Num attackDelay = setting(Setting.Num.standalone("Attack time (ms)", 20, 5, 500, 5));
-    private final Setting.Num placeDelay = setting(Setting.Num.standalone("Place time (ms)", 20, 5, 500, 5));
+    private final Setting.Num attackDelay = setting(Setting.Num.standalone("Attack time (ms)", 20, 5, 500, 5), "Pause between placing the crystal and detonating it.");
+    private final Setting.Num placeDelay = setting(Setting.Num.standalone("Place time (ms)", 20, 5, 500, 5), "Pause between your weapon hit and placing the crystal.");
     private Player target;
     private Player owner;
     private net.minecraft.client.multiplayer.ClientLevel targetLevel;

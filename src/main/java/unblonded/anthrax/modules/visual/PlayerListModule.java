@@ -53,12 +53,12 @@ public final class PlayerListModule extends FeatureModule {
     private static final EquipmentSlot[] SLOTS = {EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS,
             EquipmentSlot.FEET, EquipmentSlot.MAINHAND, EquipmentSlot.OFFHAND};
 
-    private final Setting.Mode expand = setting(Setting.Mode.standalone("Expand", "Closest", "Click", "Closest", "All", "None"));
+    private final Setting.Mode expand = setting(Setting.Mode.standalone("Expand", "Closest", "Click", "Closest", "All", "None"), "Which rows open into full intel cards. Open chat and click a row to open or close it.");
     private final Setting.Bool showFriends = setting(Setting.Bool.standalone("Show friends", true));
     private final Setting.Bool showEmpty = setting(Setting.Bool.standalone("Show when empty", true));
     private final Setting.Bool showLoadout = setting(Setting.Bool.standalone("Loadout and enchants", true));
     private final Setting.Bool showTelemetry = setting(Setting.Bool.standalone("Telemetry", true));
-    private final Setting.Bool freeze = setting(Setting.Bool.standalone("Freeze list", false));
+    private final Setting.Bool freeze = setting(Setting.Bool.standalone("Freeze list", false), "Keep showing the list as it was when you turned this on.");
     private final Setting.Num maxEntries = setting(Setting.Num.standalone("Max players", 8, 1, 20, 1));
     private final Setting.Num range = setting(Setting.Num.standalone("Range", 128, 8, 512, 8));
     private List<Entry> current = List.of();

@@ -8,7 +8,7 @@ import unblonded.anthrax.modules.Setting;
 
 /** Disconnects when another player gets too close or your health drops too low. Disarms after firing. */
 public final class AutoDisconnectModule extends FeatureModule {
-    private final Setting.Bool primed = setting(Setting.Bool.standalone("Primed", false));
+    private final Setting.Bool primed = setting(Setting.Bool.standalone("Primed", false), "Arm the disconnect; it turns itself off after it fires.");
     private final Setting.Num distance = setting(Setting.Num.standalone("Player proximity", 5, 1, 64, .5));
     private final Setting.Num health = setting(Setting.Num.standalone("Health below (0 = off)", 0, 0, 20, .5));
 

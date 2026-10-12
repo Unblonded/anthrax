@@ -147,7 +147,11 @@ public class AnthraxScreen extends Screen {
     private String activeText = "0 ACTIVE";
 
     private int category = -1;
-    private float scroll, scrollTarget, contentHeight;
+    /**
+     * Static so reopening the menu lands where you left it (kept in memory only, never saved to disk).
+     * contentHeight is kept too, or the first frame would clamp the restored scroll back to the top.
+     */
+    private static float scroll, scrollTarget, contentHeight;
     private float tabY = -1, tabV;
     /** Per-setting animation state: [0] value position, [1] hover, [2] spring velocity. */
     private final Map<Setting, float[]> settingAnim = new IdentityHashMap<>();
@@ -158,13 +162,12 @@ public class AnthraxScreen extends Screen {
     private final Map<Object, TextEdit> edits = new java.util.IdentityHashMap<>();
     private final TextEdit searchEdit = new TextEdit(() -> search, v -> { search = v; scrollTarget = 0; }, 48);
     private int clickX;
-    private final Map<String, Float> detachedScroll = new java.util.HashMap<>();
-    private final Map<String, Float> detachedScrollTarget = new java.util.HashMap<>();
+    private static final Map<String, Float> detachedScroll = new java.util.HashMap<>();
+    private static final Map<String, Float> detachedScrollTarget = new java.util.HashMap<>();
     private final Map<String, WindowRect> detachedRects = new java.util.HashMap<>();
     private final Map<String, int[]> detachedCardMetrics = new java.util.HashMap<>();
 
     private float gs = 1f;
-    private float uiOverride = 1f;
     private int mx, my;                    // mouse in real pixels
     private int vx, vy, vw, vh;            // scrollable viewport (real pixels)
     private long lastNs = System.nanoTime();
@@ -195,6 +198,7 @@ public class AnthraxScreen extends Screen {
 
     public AnthraxScreen() {
         super(Component.literal("Anthrax"));
+        if (!GuiPreferences.onboarded()) tourPage = 0;
     }
 
     // =====================================================================
@@ -211,14 +215,11 @@ public class AnthraxScreen extends Screen {
         // Not calling super: this screen paints its own glass UI and has no vanilla widgets.
 
         Draw.measureFont = this.font;
-        // Keep the virtual canvas tied to the window scale. Apply the module's
-        // font/UI override only in the final transform so it doesn't cancel out
-        // against Draw.S, which is calculated from the virtual canvas size.
+        // The canvas is the window in real pixels; Menu Size steps Draw.S (see drawAll), never the pose.
         gs = (float) minecraft.getWindow().getGuiScale();
-        uiOverride = FontSizeModule.scale();
         int pw = Math.round(width * gs), ph = Math.round(height * gs);
-        mx = Math.round(mouseX * gs / uiOverride);
-        my = Math.round(mouseY * gs / uiOverride);
+        mx = Math.round(mouseX * gs);
+        my = Math.round(mouseY * gs);
 
         long nowNs = System.nanoTime();
         float dt = Math.min(0.05f, (nowNs - lastNs) / 1_000_000_000f);
@@ -242,8 +243,7 @@ public class AnthraxScreen extends Screen {
         refreshModules(wallMs);
 
         g.pose().pushMatrix();
-        float uiScale = uiOverride / gs;
-        g.pose().scale(uiScale, uiScale);
+        g.pose().scale(1f / gs, 1f / gs);
         long costStart = System.nanoTime();
         try {
             drawAll(g, pw, ph, dt, wallMs, nowNs);
@@ -285,7 +285,7 @@ public class AnthraxScreen extends Screen {
         hoveredSlider = null;
         long ms = wallMs - startMs;
         Theme.tick(wallMs);
-        Draw.S = Math.max(1, Math.min(4, Math.min(Math.round(ph / 720f), Math.min(pw / 600, ph / 400))));
+        Draw.S = FontSizeModule.apply(Math.min(Math.round(ph / 720f), Math.min(pw / 600, ph / 400)));
         int accent = Theme.accent(), accent2 = Theme.accent2();
 
         float introT = (nowNs - openNs) / 1_000_000_000f;
@@ -299,6 +299,7 @@ public class AnthraxScreen extends Screen {
         if (GuiPreferences.separateCategoryWindows()) {
             drawDetachedWindows(g, pw, ph, dt, ms, nowNs, open, accent, accent2);
             Hud.toasts(g, pw, ph, accent, u(18));
+            drawTour(g, pw, ph, accent, accent2);
             drawTooltip(g, pw, ph, accent);
             return;
         }
@@ -362,6 +363,7 @@ public class AnthraxScreen extends Screen {
         }
 
         Hud.toasts(g, pw, ph, accent, u(18));
+        drawTour(g, pw, ph, accent, accent2);
         drawTooltip(g, pw, ph, accent);
     }
 
@@ -431,8 +433,10 @@ public class AnthraxScreen extends Screen {
         int themeX = closeX - u(8) - themeW;
         int fxW = u(46);
         int fxX = themeX - u(6) - fxW;
+        int helpX = fxX - u(6) - bh;
+        iconButton(g, helpX, cy - bh / 2, bh, Icons.CIRCLE_QUESTION, accent, () -> tourPage = 0);
         // the search box shrinks and the FPS chip hides as the window gets narrower
-        int space = fxX - u(10) - (ix + u(166));
+        int space = helpX - u(10) - (ix + u(166));
         boolean showChip = space >= u(170 + 68);
         int searchW = Math.max(u(90), Math.min(u(170), space - (showChip ? u(68) : 0)));
         drawSearch(g, ix + u(166), cy, searchW, accent);
@@ -452,6 +456,7 @@ public class AnthraxScreen extends Screen {
 
     private void drawSearch(GuiGraphicsExtractor g, int x, int cy, int w, int accent) {
         int h = u(26), y = cy - h / 2;
+        spotSearch = new int[]{x, y, w, h};
         boolean hov = inside(mx, my, x, y, w, h);
         boolean active = searchFocused || !search.isEmpty();
         round(g, x, y, w, h, h / 2, alpha(0x000000, searchFocused ? 0x48 : 0x30));
@@ -564,6 +569,7 @@ public class AnthraxScreen extends Screen {
         category = Math.max(0, Math.min(category, Math.max(0, cats.size() - 1)));
 
         int px = ix + u(12), pw = sideW - u(16), py = top + u(10), ph = bottom - top - u(20);
+        spotSidebar = new int[]{px, py, pw, ph};
         glass(g, px, py, pw, ph, u(18), 0x0CFFFFFF, 0.3f);
         text(g, px + u(14), py + u(16), "Categories", Theme.DIM, true);
 
@@ -812,6 +818,7 @@ public class AnthraxScreen extends Screen {
         vw = iw - sideW - u(28);
         vy = top + u(40);
         vh = bottom - vy - u(8);
+        spotCards = new int[]{vx, vy, vw, vh};
 
         text(g, vx + u(2), top + u(22), cat, Theme.TEXT, true);
         textR(g, vx + vw, top + u(22), moduleCountLabel(mods.size()), Theme.MUTED, false);
@@ -827,7 +834,7 @@ public class AnthraxScreen extends Screen {
         int cursor = vy - Math.round(scroll);
         int total = 0;
         int gap = u(8);
-        int index = 0;
+        int index = 0;   // position among cards from the top of the viewport, for the slide-in stagger
         for (GuiModule m : mods) {
             CardState st = state(m);
             st.expand += ((st.open ? 1f : 0f) - st.expand) * Math.min(1f, dt * 12f);
@@ -836,7 +843,9 @@ public class AnthraxScreen extends Screen {
             int hdr = u(54);
             int cardH = hdr + Math.round(settingsHeight(m) * st.expand);
 
-            // staggered slide-in
+            // staggered slide-in, counted from the first card on screen: cards scrolled past above it
+            // add no delay, so a menu reopened deep in a list fills in at once
+            boolean above = cursor + cardH < vy;
             float ap = easeOut((catT - 0.07f * index - 0.12f) / 0.35f);
             int yy = cursor + Math.round((1f - ap) * u(18));
             if (ap > 0.01f && yy + cardH >= vy && yy <= vy + vh) {
@@ -844,7 +853,7 @@ public class AnthraxScreen extends Screen {
             }
             cursor += cardH + gap;
             total += cardH + gap;
-            index++;
+            if (!above) index++;
         }
         g.disableScissor();
         contentHeight = Math.max(0, total - gap);
@@ -981,7 +990,11 @@ public class AnthraxScreen extends Screen {
         int nameX = x + u(52);
         int nameMax = Math.max(0, (showBind ? bx : moduleSettings.isEmpty() ? sx : sx - u(36)) - u(8) - nameX);
         boolean showDescription = w >= u(320);
-        text(g, nameX, y + (showDescription ? u(19) : hdr / 2), fitText(m.name, nameMax, true), Theme.TEXT, true);
+        String shownName = fitText(m.name, nameMax, true);
+        int nameY = y + (showDescription ? u(19) : hdr / 2);
+        text(g, nameX, nameY, shownName, Theme.TEXT, true);
+        // a small dot marks modules whose settings differ from the defaults
+        if (!moduleSettings.isEmpty() && !allDefault(m)) circle(g, nameX + textWidth(shownName, true) + u(6), nameY, Math.max(1, u(2)), alpha(accent, 0xD0));
         if (showDescription) text(g, nameX, y + u(35), fitText(m.description, nameMax, false), Theme.MUTED, false);
 
         // hover tooltips: the bind chip explains itself; narrow cards show their description
@@ -1064,6 +1077,24 @@ public class AnthraxScreen extends Screen {
         return settingAnim.computeIfAbsent(s, k -> new float[]{Float.NaN, 0f, 0f});
     }
 
+    private Setting hoverSetting;
+    private long hoverSettingSince;
+
+    /** What a setting does: its description, plus how to use it (range, options) when that helps. */
+    private static String settingHelp(Setting s) {
+        String how = null;
+        if (s instanceof Setting.Num n) how = "Range " + trim(n.min) + " to " + trim(n.max) + ". Drag, or Shift+scroll for exact steps.";
+        else if (s instanceof Setting.Mode md) how = "Options: " + String.join(", ", md.options);
+        else if (s instanceof Setting.Bool) how = "Click to toggle. Middle-click resets it.";
+        else if (s instanceof Setting.Text) how = "Click and type.";
+        if (s.description == null) return how;
+        return how == null ? s.description : s.description + "   " + how;
+    }
+
+    private static String trim(double v) {
+        return v == Math.rint(v) ? Long.toString((long) v) : Double.toString(Math.round(v * 100) / 100.0);
+    }
+
     private void drawSetting(GuiGraphicsExtractor g, Setting s, int x, int y, int w, int rh,
                              int accent, int accent2, boolean interactive, long ms) {
         int pad = u(16);
@@ -1071,6 +1102,11 @@ public class AnthraxScreen extends Screen {
         float dt = Math.min(0.05f, 1f / Math.max(30, fps));
         float[] a = anim(s);
         boolean rowHov = interactive && inside(mx, my, x + u(6), y, w - u(12), rh) && inside(mx, my, vx, vy, vw, vh);
+        // hover a row for a moment to see what it does (more specific tooltips set later still win)
+        if (rowHov) {
+            if (hoverSetting != s) { hoverSetting = s; hoverSettingSince = System.currentTimeMillis(); }
+            else if (System.currentTimeMillis() - hoverSettingSince > 420) setTooltip(settingHelp(s));
+        } else if (hoverSetting == s) hoverSetting = null;
         a[1] += ((rowHov ? 1f : 0f) - a[1]) * Math.min(1f, dt * 14f);
         if (a[1] > 0.02f) round(g, x + u(8), y + S, w - u(16), rh - 2 * S, u(10), alpha(0xFFFFFF, (int) (0x0C * a[1])));
 
@@ -1224,11 +1260,130 @@ public class AnthraxScreen extends Screen {
         x = hint(g, x, cy, "Type", "search");
         int buttonX = ix + iw - u(118), buttonY = cy - u(10);
         int layoutX = buttonX - u(106);
+        spotFooter = new int[]{layoutX, buttonY, buttonX + u(100) - layoutX, u(20)};
         String stats = costText + "   " + clockText;
         if (layoutX - u(12) - textWidth(stats, false) > x) textR(g, layoutX - u(12), cy, stats, Theme.MUTED, false);
         button(g, layoutX, buttonY, u(100), u(20), "HUD Layout", Theme.accent(), this::openHudEditor);
         button(g, buttonX, buttonY, u(100), u(20), "Windows", Theme.accent(),
                 () -> GuiPreferences.setSeparateCategoryWindows(true));
+    }
+
+    // =====================================================================
+    //  first-run tour
+    // =====================================================================
+    private int tourPage = -1;
+    private float tourAnim;
+    private int[] spotSearch, spotSidebar, spotCards, spotFooter;
+
+    private record TourPage(String glyph, String title, String body, int spot) {}
+    private static final int SPOT_NONE = 0, SPOT_CARDS = 1, SPOT_SIDEBAR = 2, SPOT_SEARCH = 3, SPOT_FOOTER = 4;
+    private static final List<TourPage> TOUR = List.of(
+            new TourPage(Icons.WAND_MAGIC_SPARKLES, "Welcome to Anthrax",
+                    "A 30-second tour of the menu. Use the arrow keys or the buttons below, Esc skips. You can replay it any time from the ? button in the header.", SPOT_NONE),
+            new TourPage(Icons.HAND_POINTER, "Modules",
+                    "Left-click a card to turn it on. Right-click opens its settings, middle-click binds a key. Hover any setting for a moment to see what it does. A dot after a name means you changed its settings.", SPOT_CARDS),
+            new TourPage(Icons.LAYER_GROUP, "Categories",
+                    "Modules are grouped here. The menu remembers the category, scroll position and which cards are open.", SPOT_SIDEBAR),
+            new TourPage(Icons.MAGNIFYING_GLASS, "Find anything",
+                    "Just start typing to search every module and setting. Enter toggles the top result, Ctrl+F jumps to the search box.", SPOT_SEARCH),
+            new TourPage(Icons.PALETTE, "Make it yours",
+                    "HUD Layout lets you drag every HUD block anywhere. Windows splits categories into movable, resizable windows. Theme and FX in the header change the look, and the corner grip resizes this window.", SPOT_FOOTER),
+            new TourPage(Icons.ROCKET, "You're set",
+                    "World Themes has calm ready-made looks under Look preset, Base Intel (B) has a map of every base found, and .help in chat lists commands with Tab completion. Want a sensible starting setup?", SPOT_NONE));
+
+    private void tourStep(int dir) {
+        int next = tourPage + dir;
+        if (next >= TOUR.size()) { finishTour(); return; }
+        tourPage = Math.max(0, next);
+        tourAnim = 0;
+    }
+
+    private void finishTour() {
+        tourPage = -1;
+        GuiPreferences.setOnboarded(true);
+        ModuleConfig.saveNow();
+    }
+
+    /** Turns on a calm, non-combat starting set and the Clean world look. */
+    private void recommendedSetup() {
+        java.util.Set<String> wanted = java.util.Set.of("Hand Render", "Show Cosmic Crosshair", "Show Player List", "Storage ESP", "Waypoints", "World Themes");
+        for (GuiModule m : ModuleRegistry.all()) {
+            if (!wanted.contains(m.name)) continue;
+            m.setEnabled(true);
+            if (m.name.equals("World Themes"))
+                for (Setting s : m.settings()) if (s instanceof Setting.Mode md && s.name.equals("Look preset")) md.set("Clean");
+        }
+        Notifications.success("Anthrax", "Recommended setup applied");
+        finishTour();
+    }
+
+    private void drawTour(GuiGraphicsExtractor g, int pw, int ph, int accent, int accent2) {
+        if (tourPage < 0) return;
+        tooltip = null;
+        TourPage page = TOUR.get(tourPage);
+        tourAnim = Math.min(1, tourAnim + 0.08f);
+        float k = easeOut(tourAnim);
+        int[] spot = GuiPreferences.separateCategoryWindows() ? null : switch (page.spot) {
+            case SPOT_CARDS -> spotCards;
+            case SPOT_SIDEBAR -> spotSidebar;
+            case SPOT_SEARCH -> spotSearch;
+            case SPOT_FOOTER -> spotFooter;
+            default -> null;
+        };
+        // dim everything except the spotlight, then ring it with a pulsing accent outline
+        int dim = 0xA8000000;
+        hit(0, 0, pw, ph, false, b -> {}, null);   // swallow clicks meant for the menu underneath
+        if (spot == null) g.fill(0, 0, pw, ph, dim);
+        else {
+            int pad = u(6), sx = spot[0] - pad, sy = spot[1] - pad, sw = spot[2] + 2 * pad, sh = spot[3] + 2 * pad;
+            g.fill(0, 0, pw, sy, dim);
+            g.fill(0, sy + sh, pw, ph, dim);
+            g.fill(0, sy, sx, sy + sh, dim);
+            g.fill(sx + sw, sy, pw, sy + sh, dim);
+            float pulse = .5f + .5f * (float) Math.sin(System.currentTimeMillis() / 260.0);
+            outline(g, sx, sy, sw, sh, u(12), Math.max(2, S), alpha(accent, (int) (0xA0 + 0x50 * pulse)), alpha(accent2, (int) (0x80 + 0x50 * pulse)));
+            if (FANCY) glow(g, sx + sw / 2, sy + sh / 2, Math.max(sw, sh) / 2 + u(20), accent, 3, (int) (8 + 8 * pulse));
+        }
+
+        int w = Math.min(pw - u(24), u(430));
+        List<String> lines = wrap(page.body, w - u(48));
+        int h = u(110) + lines.size() * u(14);
+        int x = (pw - w) / 2, y = (ph - h) / 2;
+        if (spot != null && spot[3] < ph / 2) {
+            // sit next to the spotlight instead of on top of it
+            int below = spot[1] + spot[3] + u(18), above = spot[1] - h - u(18);
+            y = below + h < ph - u(8) ? below : Math.max(u(8), above);
+        }
+        y += Math.round((1 - k) * u(14));
+        shadow(g, x, y, w, h, u(20), u(18), 0x80);
+        glass(g, x, y, w, h, u(20), alpha(0x10131C, 0xF0), 1f);
+        int bead = u(30);
+        bead(g, x + u(20), y + u(18), bead, accent);
+        icon(g, x + u(20) + bead / 2, y + u(18) + bead / 2, page.glyph, 0xFFFFFFFF);
+        text(g, x + u(20) + bead + u(12), y + u(26), page.title, Theme.TEXT, true);
+        text(g, x + u(20) + bead + u(12), y + u(40), "Step " + (tourPage + 1) + " of " + TOUR.size(), Theme.DIM, false);
+        for (int i = 0; i < lines.size(); i++) text(g, x + u(24), y + u(66) + i * u(14), lines.get(i), Theme.SUBTEXT, false);
+
+        // progress dots
+        int dotsY = y + h - u(22), dotsX = x + u(24);
+        for (int i = 0; i < TOUR.size(); i++) {
+            boolean on = i == tourPage;
+            round(g, dotsX, dotsY - u(3), on ? u(16) : u(6), u(6), u(3), on ? accent : (i < tourPage ? alpha(accent, 0x80) : 0x30FFFFFF));
+            dotsX += (on ? u(16) : u(6)) + u(5);
+        }
+        int bh = u(24), by = y + h - u(34);
+        boolean last = tourPage == TOUR.size() - 1;
+        int nextW = u(last ? 70 : 76), nx = x + w - u(20) - nextW;
+        button(g, nx, by, nextW, bh, last ? "Start" : "Next", accent, () -> tourStep(1));
+        if (last) {
+            int rw = u(150);
+            button(g, nx - u(8) - rw, by, rw, bh, "Recommended setup", accent2, this::recommendedSetup);
+        } else {
+            if (tourPage > 0) button(g, nx - u(8) - u(64), by, u(64), bh, "Back", accent, () -> tourStep(-1));
+            int skipX = x + w - u(20) - nextW - u(8) - u(64) - (tourPage > 0 ? u(72) : 0);
+            text(g, skipX + u(10), by + bh / 2, "Skip", Theme.DIM, false);
+            hit(skipX, by, u(40), bh, false, b -> finishTour(), null);
+        }
     }
 
     private void openHudEditor() {
@@ -1257,16 +1412,41 @@ public class AnthraxScreen extends Screen {
         tooltipY = my;
     }
 
+    /** Word-wrapped tooltip card (up to 6 lines) that stays on screen. */
     private void drawTooltip(GuiGraphicsExtractor g, int pw, int ph, int accent) {
         if (tooltip == null) return;
-        String shown = fitText(tooltip, u(300), false);
-        int w = textWidth(shown, false) + u(20), h = u(24);
-        int x = Math.min(pw - w - u(4), tooltipX + u(12));
+        List<String> lines = wrap(tooltip, u(280));
+        int lineH = u(13), w = u(20), h = lines.size() * lineH + u(12);
+        for (String l : lines) w = Math.max(w, textWidth(l, false) + u(20));
+        int x = Math.max(u(4), Math.min(pw - w - u(4), tooltipX + u(12)));
         int y = tooltipY + u(16);
         if (y + h > ph - u(4)) y = tooltipY - h - u(8);
-        shadow(g, x, y, w, h, h / 2, u(8), 0x60);
-        glass(g, x, y, w, h, h / 2, alpha(0x14161F, 0xE6), 1f);
-        text(g, x + u(10), y + h / 2, shown, Theme.TEXT, false);
+        int r = lines.size() == 1 ? h / 2 : u(10);
+        shadow(g, x, y, w, h, r, u(8), 0x60);
+        glass(g, x, y, w, h, r, alpha(0x14161F, 0xEC), 1f);
+        if (lines.size() > 1) fill(g, x + u(5), y + u(7), Math.max(2, S), h - u(14), alpha(accent, 0xC0));
+        for (int i = 0; i < lines.size(); i++)
+            text(g, x + u(10) + (lines.size() > 1 ? u(3) : 0), y + u(6) + lineH * i + lineH / 2, lines.get(i), i == 0 ? Theme.TEXT : Theme.SUBTEXT, false);
+    }
+
+    private static List<String> wrap(String text, int maxW) {
+        List<String> out = new ArrayList<>();
+        StringBuilder line = new StringBuilder();
+        for (String word : text.split(" ")) {
+            if (word.isEmpty()) continue;
+            String next = line.isEmpty() ? word : line + " " + word;
+            if (textWidth(next, false) > maxW && !line.isEmpty()) {
+                out.add(line.toString());
+                if (out.size() == 6) return out;
+                line.setLength(0);
+                line.append(word);
+            } else {
+                line.setLength(0);
+                line.append(next);
+            }
+        }
+        if (!line.isEmpty()) out.add(line.toString());
+        return out;
     }
 
     private int maxOptionWidth(Setting.Mode mode) {
@@ -1330,7 +1510,7 @@ public class AnthraxScreen extends Screen {
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         focusedText = null;
         searchFocused = false;
-        clickX = Math.round((float) event.x() * gs / uiOverride);
+        clickX = Math.round((float) event.x() * gs);
         // listening for a bind: middle and side mouse buttons bind (left/right stay for clicking)
         if (binding != null && event.button() >= 2) {
             GuiModule module = binding;
@@ -1341,7 +1521,7 @@ public class AnthraxScreen extends Screen {
         }
         bindingBeforeClick = binding;
         binding = null;
-        int px = Math.round((float) event.x() * gs / uiOverride), py = Math.round((float) event.y() * gs / uiOverride);
+        int px = Math.round((float) event.x() * gs), py = Math.round((float) event.y() * gs);
         int button = event.button();
         if (GuiPreferences.separateCategoryWindows()) {
             // any click inside a category window raises it (front-most window under the cursor)
@@ -1367,6 +1547,7 @@ public class AnthraxScreen extends Screen {
 
     @Override
     public boolean charTyped(CharacterEvent event) {
+        if (tourPage >= 0) return true;
         if (swallowNextChar) { swallowNextChar = false; return true; }
         if (binding != null) return true;
         if (focusedText == null) {
@@ -1386,6 +1567,12 @@ public class AnthraxScreen extends Screen {
     public boolean keyPressed(KeyEvent event) {
         swallowNextChar = false;
         int key = event.key();
+        if (tourPage >= 0) {
+            if (key == GLFW.GLFW_KEY_ESCAPE) finishTour();
+            else if (key == GLFW.GLFW_KEY_RIGHT || key == GLFW.GLFW_KEY_ENTER || key == GLFW.GLFW_KEY_SPACE) tourStep(1);
+            else if (key == GLFW.GLFW_KEY_LEFT) tourStep(-1);
+            return true;
+        }
         boolean control = (event.modifiers() & GLFW.GLFW_MOD_CONTROL) != 0;
         if (binding != null) {
             GuiModule module = binding;
@@ -1444,8 +1631,8 @@ public class AnthraxScreen extends Screen {
     @Override
     public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
         if (activeDrag != null) {
-            activeDrag.to(Math.round((float) event.x() * gs / uiOverride),
-                    Math.round((float) event.y() * gs / uiOverride));
+            activeDrag.to(Math.round((float) event.x() * gs),
+                    Math.round((float) event.y() * gs));
             return true;
         }
         return super.mouseDragged(event, dragX, dragY);
@@ -1460,6 +1647,7 @@ public class AnthraxScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (tourPage >= 0) return true;
         if (InputConstants.isKeyDown(Minecraft.getInstance().getWindow(), GLFW.GLFW_KEY_LEFT_SHIFT)
                 || InputConstants.isKeyDown(Minecraft.getInstance().getWindow(), GLFW.GLFW_KEY_RIGHT_SHIFT)) {
             Setting.Num slider = hoveredSlider;
@@ -1469,8 +1657,8 @@ public class AnthraxScreen extends Screen {
             }
         }
         if (GuiPreferences.separateCategoryWindows()) {
-            int px = Math.round((float) mouseX * gs / uiOverride);
-            int py = Math.round((float) mouseY * gs / uiOverride);
+            int px = Math.round((float) mouseX * gs);
+            int py = Math.round((float) mouseY * gs);
             List<String> order = GuiPreferences.windowOrder(cats);
             for (int i = order.size() - 1; i >= 0; i--) {
                 String cat = order.get(i);
@@ -1549,7 +1737,7 @@ public class AnthraxScreen extends Screen {
             case "Config Profiles" -> new ItemStack(Items.WRITABLE_BOOK);
             case "HUD" -> new ItemStack(Items.ITEM_FRAME);
             case "World Themes" -> new ItemStack(Items.AMETHYST_SHARD);
-            case "Font Size Override", "Loadout Manager" -> new ItemStack(Items.BOOK);
+            case "Menu Size", "Loadout Manager" -> new ItemStack(Items.BOOK);
             case "Cosmic Crosshair", "Show Cosmic Crosshair" -> new ItemStack(Items.NETHER_STAR);
             case "No Render", "Interaction Canceler" -> new ItemStack(Items.BARRIER);
             case "Hand Render" -> new ItemStack(Items.ARMOR_STAND);
@@ -1557,6 +1745,7 @@ public class AnthraxScreen extends Screen {
             case "Auto Sell" -> new ItemStack(Items.EMERALD);
             case "Chat Filter" -> new ItemStack(Items.PAPER);
             case "Storage Scan" -> new ItemStack(Items.CHEST);
+            case "New Chunks" -> new ItemStack(Items.GRASS_BLOCK);
             default -> ItemStack.EMPTY;
         };
     }

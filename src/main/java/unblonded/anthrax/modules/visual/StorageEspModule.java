@@ -36,7 +36,7 @@ public final class StorageEspModule extends FeatureModule implements WorldOverla
     private final Setting.Bool barrels = setting(Setting.Bool.standalone("Barrels", true));
     private final Setting.Bool hoppers = setting(Setting.Bool.standalone("Hoppers, droppers, dispensers", false));
     private final Setting.Bool furnaces = setting(Setting.Bool.standalone("Furnaces", false));
-    private final Setting.Bool fill = setting(Setting.Bool.standalone("Filled boxes", true));
+    private final Setting.Bool fill = setting(Setting.Bool.standalone("Filled boxes", true), "Fill the highlight boxes instead of drawing outlines only.");
     private final Setting.Bool tracers = setting(Setting.Bool.standalone("Tracers", false));
     private volatile List<Box> boxes = List.of();
     private long lastScan;

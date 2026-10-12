@@ -17,9 +17,9 @@ import java.util.concurrent.ThreadLocalRandom;
 public final class AutoTotemModule extends FeatureModule {
     private static final int OFFHAND_BUTTON = 40;
 
-    private final Setting.Mode mode = setting(Setting.Mode.standalone("Mode", "Pop only", "Pop only", "Always"));
-    private final Setting.Num delay = setting(Setting.Num.standalone("Delay (ms)", 50, 0, 500, 10));
-    private final Setting.Num humanity = setting(Setting.Num.standalone("Extra delay", 0, 0, 200, 10));
+    private final Setting.Mode mode = setting(Setting.Mode.standalone("Mode", "Pop only", "Pop only", "Always"), "Pop only refills after a totem is used; Always keeps a totem in your offhand at all times.");
+    private final Setting.Num delay = setting(Setting.Num.standalone("Delay (ms)", 50, 0, 500, 10), "Pause before the swap, so it does not happen in the same instant as the pop.");
+    private final Setting.Num humanity = setting(Setting.Num.standalone("Extra delay", 0, 0, 200, 10), "Random extra pause added on top of Delay.");
     private long equipAt;
     private boolean warnedEmpty;
     /** Set when a swap click was sent; if no totem arrives in time, the next attempt uses pickup clicks. */

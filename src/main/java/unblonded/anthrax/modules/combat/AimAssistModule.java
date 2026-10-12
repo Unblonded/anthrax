@@ -17,11 +17,11 @@ import unblonded.anthrax.modules.Setting;
 public final class AimAssistModule extends FeatureModule {
     private final Setting.Num range = setting(Setting.Num.standalone("Range", 6.8, 1, 20, .1));
     private final Setting.Num fov = setting(Setting.Num.standalone("Field of view", 128.2, 1, 180, .1));
-    private final Setting.Num smoothing = setting(Setting.Num.standalone("Smoothness", 1, .1, 10, .1));
+    private final Setting.Num smoothing = setting(Setting.Num.standalone("Smoothness", 1, .1, 10, .1), "Higher values ease onto the target more gently.");
     private final Setting.Num minSpeed = setting(Setting.Num.standalone("Min speed", 143, 1, 360, 1));
     private final Setting.Num maxSpeed = setting(Setting.Num.standalone("Max speed", 146, 1, 360, 1));
-    private final Setting.Mode aimPoint = setting(Setting.Mode.standalone("Aim point", "Head", "Head", "Chest", "Feet"));
-    private final Setting.Bool visibility = setting(Setting.Bool.standalone("Visibility check", true));
+    private final Setting.Mode aimPoint = setting(Setting.Mode.standalone("Aim point", "Head", "Head", "Chest", "Feet"), "Which part of the target's body the aim settles on.");
+    private final Setting.Bool visibility = setting(Setting.Bool.standalone("Visibility check", true), "Ignore targets behind walls.");
     private final Setting.Bool weaponOnly = setting(Setting.Bool.standalone("Only holding weapon", false));
     private final Setting.Bool ignoreInvisible = setting(Setting.Bool.standalone("Ignore invisible", true));
     private Player target;

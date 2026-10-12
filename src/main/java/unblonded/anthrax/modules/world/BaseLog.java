@@ -23,6 +23,12 @@ final class BaseLog {
     private static final String HEADER = "time,server,dimension,type,x,y,z,score,confidence,chunks,summary";
     private static final List<int[]> KNOWN = new ArrayList<>();
 
+    /** One logged find, as stored in the CSV. */
+    record Entry(String time, String type, int x, int y, int z, int score, int confidence, String summary) {}
+    /** Every logged find for the server and dimension last loaded (the Intel map draws these). */
+    private static final List<Entry> HISTORY = new ArrayList<>();
+    private static String loadedFor = "";
+
     private BaseLog() {}
 
     static String server() {
@@ -34,14 +40,21 @@ final class BaseLog {
 
     static void load(ClientLevel level) {
         KNOWN.clear();
-        if (!Files.isRegularFile(FILE)) return;
+        HISTORY.clear();
         String server = server(), dim = level.dimension().identifier().toString();
+        loadedFor = server + "|" + dim;
+        if (!Files.isRegularFile(FILE)) return;
         try {
             for (String line : Files.readAllLines(FILE, StandardCharsets.UTF_8)) {
                 String[] p = splitCsv(line);
                 if (p.length < 7 || !p[1].equals(server) || !p[2].equals(dim)) continue;
-                try { KNOWN.add(new int[]{Integer.parseInt(p[4]), Integer.parseInt(p[6])}); }
-                catch (NumberFormatException ignored) {}
+                try {
+                    int x = Integer.parseInt(p[4]), z = Integer.parseInt(p[6]);
+                    KNOWN.add(new int[]{x, z});
+                    HISTORY.add(new Entry(p[0], p[3], x, Integer.parseInt(p[5]), z,
+                            p.length > 7 ? Integer.parseInt(p[7]) : 0, p.length > 8 ? Integer.parseInt(p[8]) : 0,
+                            p.length > 10 ? p[10] : ""));
+                } catch (NumberFormatException ignored) {}
             }
         } catch (Exception e) {
             System.err.println("Anthrax: could not read base log: " + e.getMessage());
@@ -56,8 +69,16 @@ final class BaseLog {
         return false;
     }
 
+    /** Logged finds for the level the player is in now (loads them if the server or dimension changed). */
+    static List<Entry> history(ClientLevel level) {
+        if (level != null && !loadedFor.equals(server() + "|" + level.dimension().identifier())) load(level);
+        return List.copyOf(HISTORY);
+    }
+
     static void append(ClientLevel level, BaseFinderModule.Base b) {
         KNOWN.add(new int[]{b.x, b.z});
+        HISTORY.add(new Entry(LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME), b.type, b.x, b.y, b.z,
+                Math.round(b.score), b.confidence, b.summary));
         String row = String.join(",", LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
                 csv(server()), csv(level.dimension().identifier().toString()), csv(b.type),
                 Integer.toString(b.x), Integer.toString(b.y), Integer.toString(b.z),

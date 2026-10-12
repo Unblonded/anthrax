@@ -20,11 +20,11 @@ import unblonded.anthrax.modules.Setting;
  * crystals cannot be placed next to you. Re-places broken blocks; turns off when you move away.
  */
 public final class SurroundModule extends FeatureModule {
-    private final Setting.Num perTick = setting(Setting.Num.standalone("Blocks per tick", 2, 1, 8, 1));
-    private final Setting.Bool center = setting(Setting.Bool.standalone("Center on enable", true));
-    private final Setting.Bool floor = setting(Setting.Bool.standalone("Place floor if missing", true));
+    private final Setting.Num perTick = setting(Setting.Num.standalone("Blocks per tick", 2, 1, 8, 1), "How many blocks may be placed each tick.");
+    private final Setting.Bool center = setting(Setting.Bool.standalone("Center on enable", true), "Walk to the middle of your block first so all four sides can be placed.");
+    private final Setting.Bool floor = setting(Setting.Bool.standalone("Place floor if missing", true), "Also place blocks underneath, so the side blocks have support.");
     private final Setting.Bool ender = setting(Setting.Bool.standalone("Use ender chests too", true));
-    private final Setting.Bool disableOnMove = setting(Setting.Bool.standalone("Disable when you move", true));
+    private final Setting.Bool disableOnMove = setting(Setting.Bool.standalone("Disable when you move", true), "Turn off once you leave the block you started on.");
     private BlockPos anchor;
     /** Walking onto the block centre (a teleport there would be rubber-banded by the server). */
     private boolean centering;

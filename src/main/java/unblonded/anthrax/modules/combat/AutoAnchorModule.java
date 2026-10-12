@@ -18,8 +18,8 @@ import unblonded.anthrax.modules.Setting;
 
 /** Charges a respawn anchor with glowstone, then triggers the normal interaction flow. */
 public final class AutoAnchorModule extends FeatureModule {
-    private final Setting.Num delay = setting(Setting.Num.standalone("Delay (ms)", 15, 1, 50, 1));
-    private final Setting.Num humanity = setting(Setting.Num.standalone("Humanity (ms)", 3, 0, 50, 1));
+    private final Setting.Num delay = setting(Setting.Num.standalone("Delay (ms)", 15, 1, 50, 1), "Pause between placing the anchor, charging it and using it.");
+    private final Setting.Num humanity = setting(Setting.Num.standalone("Humanity (ms)", 3, 0, 50, 1), "Random extra delay added to each step.");
     private BlockPos pending;
     private int glowstoneSlot = -1;
     private int stage;

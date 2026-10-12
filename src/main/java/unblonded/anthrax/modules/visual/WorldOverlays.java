@@ -21,7 +21,8 @@ public final class WorldOverlays {
     private static final Overlay[] OVERLAYS = {
             StorageEspModule.INSTANCE, TracersModule.INSTANCE, HoleEspModule.INSTANCE,
             LogoutSpotsModule.INSTANCE, BreadcrumbsModule.INSTANCE, TrajectoriesModule.INSTANCE,
-            unblonded.anthrax.modules.world.AmethystEspModule.INSTANCE
+            unblonded.anthrax.modules.world.AmethystEspModule.INSTANCE,
+            unblonded.anthrax.modules.world.NewChunksModule.INSTANCE
     };
 
     public static void render(LevelRenderer renderer) {
@@ -37,8 +38,8 @@ public final class WorldOverlays {
         try (var ignored = Gizmos.withCollector(collector)) {
             for (Overlay o : OVERLAYS) {
                 if (!o.active()) continue;
-                try { o.draw(mc, partial, eye, look); }
-                catch (RuntimeException e) { System.err.println("Anthrax overlay failed: " + e); }
+                if (o instanceof unblonded.anthrax.modules.FeatureModule m) unblonded.anthrax.modules.Safe.run(m, () -> o.draw(mc, partial, eye, look));
+                else unblonded.anthrax.modules.Safe.run(o.getClass().getSimpleName(), () -> o.draw(mc, partial, eye, look));
             }
         }
         renderer.addMainThreadGizmos(collector.drainGizmos());

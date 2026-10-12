@@ -20,6 +20,12 @@ public abstract class FeatureModule {
         this.enabled = defaultEnabled;
     }
 
+    /** Registers a setting with a hover explanation. */
+    protected final <T extends Setting> T setting(T setting, String description) {
+        setting.description = description;
+        return setting(setting);
+    }
+
     protected final <T extends Setting> T setting(T setting) {
         settings.add(setting);
         return setting;
@@ -31,6 +37,7 @@ public abstract class FeatureModule {
     public void setEnabled(boolean enabled) {
         if (this.enabled == enabled) return;
         this.enabled = enabled;
+        if (enabled) Safe.forgive(name);   // a module turned back on may report a new failure
         onToggle(enabled);
     }
 

@@ -16,7 +16,7 @@ import java.util.Properties;
 
 /** Loads and saves module state, module settings, and GUI preferences. */
 public final class ModuleConfig {
-    private static final int CONFIG_VERSION = 3;
+    private static final int CONFIG_VERSION = 4;
     /** Reserved pseudo-setting name under which a module's keybind is stored. */
     private static final String BIND = "#bind";
     private static final Path FILE = FabricLoader.getInstance().getConfigDir().resolve("anthrax.properties");
@@ -94,7 +94,68 @@ public final class ModuleConfig {
         return out;
     }
 
+    // ------------------------------------------------------------------ migration
+    /** Modules that were renamed: every saved value, bind and on/off state moves to the new name. */
+    private static final String[][] MODULE_RENAMES = {{"Font Size Override", "Menu Size"}};
+
+    /** A renamed (or re-ranged) setting; {@code value} converts the old saved text to the new format. */
+    private record Rename(String module, String from, String to, java.util.function.UnaryOperator<String> value) {}
+
+    /** Setting renames, written against the module names after {@link #MODULE_RENAMES}. */
+    private static final java.util.List<Rename> SETTING_RENAMES = java.util.List.of(
+            new Rename("World Themes", "Lightning", "+ Lightning", v -> v),
+            new Rename("World Themes", "Constellation", "+ Constellation", v -> v),
+            // old crosshair size was 1..100 (default 20); the new one is 4..30 (default 10)
+            new Rename("Show Cosmic Crosshair", "Size", "Crosshair size",
+                    v -> Double.toString(Math.max(4, Math.min(30, Math.round(number(v, 20) / 2))))),
+            // old fractional menu scale becomes a size step
+            new Rename("Menu Size", "Font size", "Menu size", v -> {
+                double f = number(v, 1.5);
+                return f < .9 ? "Smaller" : f < 1.25 ? "Normal" : f < 1.75 ? "Larger" : "Largest";
+            }));
+
+    private static double number(String v, double fallback) {
+        try { return Double.parseDouble(v); } catch (NumberFormatException e) { return fallback; }
+    }
+
+    /**
+     * Rewrites keys saved under old module/setting names to the current ones, so updating never silently
+     * resets someone's setup. A value already saved under the new name always wins.
+     */
+    private static void migrate(Properties properties) {
+        for (String key : java.util.List.copyOf(properties.stringPropertyNames())) {
+            String[] parts = decode(key);
+            if (parts == null) continue;
+            for (String[] rename : MODULE_RENAMES) {
+                if (!parts[0].equals(rename[0])) continue;
+                String moved = key(rename[1], parts[1]);
+                if (properties.getProperty(moved) == null) properties.setProperty(moved, properties.getProperty(key));
+            }
+        }
+        for (Rename r : SETTING_RENAMES) {
+            String old = properties.getProperty(key(r.module, r.from));
+            String target = key(r.module, r.to);
+            if (old != null && properties.getProperty(target) == null) {
+                try { properties.setProperty(target, r.value.apply(old)); }
+                catch (RuntimeException ignored) {}
+            }
+        }
+    }
+
+    /** {module, setting} for a saved value key, or null. */
+    private static String[] decode(String key) {
+        if (!key.startsWith("value.")) return null;
+        try {
+            String raw = new String(Base64.getUrlDecoder().decode(key.substring(6)), StandardCharsets.UTF_8);
+            int split = raw.indexOf('\u0000');
+            return split < 0 ? null : new String[]{raw.substring(0, split), raw.substring(split + 1)};
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
     private static void applyAll(Properties properties) {
+        migrate(properties);
 
         int configVersion = 0;
         try { configVersion = Integer.parseInt(properties.getProperty("anthrax.configVersion", "0")); }

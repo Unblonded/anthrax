@@ -17,21 +17,21 @@ import java.util.concurrent.ThreadLocalRandom;
 public final class KillAuraModule extends FeatureModule {
     public static final KillAuraModule INSTANCE = new KillAuraModule();
 
-    private final Setting.Num range = setting(Setting.Num.standalone("Range", 3.0, 1, 6, 0.1));
-    private final Setting.Num cooldown = setting(Setting.Num.standalone("Cooldown %", 92, 10, 100, 1));
-    private final Setting.Mode priority = setting(Setting.Mode.standalone("Priority", "Distance", "Distance", "Health", "Angle"));
-    private final Setting.Mode rotate = setting(Setting.Mode.standalone("Rotate", "Smooth", "Smooth", "Snap", "None"));
-    private final Setting.Num turnSpeed = setting(Setting.Num.standalone("Turn speed", 540, 90, 1440, 30));
-    private final Setting.Num fov = setting(Setting.Num.standalone("Field of view", 180, 10, 180, 5));
-    private final Setting.Bool crits = setting(Setting.Bool.standalone("Wait for crits", true));
+    private final Setting.Num range = setting(Setting.Num.standalone("Range", 3.0, 1, 6, 0.1), "How far away a target can be (measured to the nearest point of its hitbox).");
+    private final Setting.Num cooldown = setting(Setting.Num.standalone("Cooldown %", 92, 10, 100, 1), "Only swing once your attack has recharged this much. 90%+ gives full-damage hits.");
+    private final Setting.Mode priority = setting(Setting.Mode.standalone("Priority", "Distance", "Distance", "Health", "Angle"), "Which target to pick when several are in reach.");
+    private final Setting.Mode rotate = setting(Setting.Mode.standalone("Rotate", "Smooth", "Smooth", "Snap", "None"), "Turn your view onto the target. Smooth looks natural, Snap is instant, None never moves the camera.");
+    private final Setting.Num turnSpeed = setting(Setting.Num.standalone("Turn speed", 540, 90, 1440, 30), "How fast Smooth rotation turns, in degrees per second.");
+    private final Setting.Num fov = setting(Setting.Num.standalone("Field of view", 180, 10, 180, 5), "Only attack targets within this angle of where you look (180 = anywhere around you).");
+    private final Setting.Bool crits = setting(Setting.Bool.standalone("Wait for crits", true), "While you are jumping, hold the swing until you start falling so it lands as a critical hit.");
     private final Setting.Bool players = setting(Setting.Bool.standalone("Players", true));
     private final Setting.Bool hostiles = setting(Setting.Bool.standalone("Hostile mobs", true));
     private final Setting.Bool animals = setting(Setting.Bool.standalone("Animals", false));
     private final Setting.Bool invisible = setting(Setting.Bool.standalone("Invisible entities", false));
-    private final Setting.Bool walls = setting(Setting.Bool.standalone("Through walls", false));
+    private final Setting.Bool walls = setting(Setting.Bool.standalone("Through walls", false), "Also attack targets you cannot see.");
     private final Setting.Bool weaponOnly = setting(Setting.Bool.standalone("Only holding weapon", false));
     private final Setting.Bool pauseUsing = setting(Setting.Bool.standalone("Pause while eating", true));
-    private final Setting.Num jitter = setting(Setting.Num.standalone("Random delay (ms)", 0, 0, 150, 5));
+    private final Setting.Num jitter = setting(Setting.Num.standalone("Random delay (ms)", 0, 0, 150, 5), "Adds a random pause between swings so the rhythm is less mechanical.");
     private LivingEntity target;
     private long nextAllowed;
 

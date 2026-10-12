@@ -39,11 +39,11 @@ public final class SeedRayModule extends FeatureModule {
         public double recall() { return actual == 0 ? 1 : matched / (double) actual; }
     }
 
-    private final Setting.Text worldSeed = setting(Setting.Text.standalone("World seed", "", 32));
-    private final Setting.Num radius = setting(Setting.Num.standalone("Prediction radius (chunks)", 4, 1, 10, 1));
+    private final Setting.Text worldSeed = setting(Setting.Text.standalone("World seed", "", 32), "The server's world seed. In singleplayer it is filled in automatically.");
+    private final Setting.Num radius = setting(Setting.Num.standalone("Prediction radius (chunks)", 4, 1, 10, 1), "How far around you ore positions are predicted.");
     private final Setting.Mode renderMode = setting(Setting.Mode.standalone("Render mode", "Wire", "Wire", "Glow"));
     private final Setting.Bool deepslateOres = setting(Setting.Bool.standalone("Deepslate ores", true));
-    private final Setting.Bool hideMined = setting(Setting.Bool.standalone("Hide mined ores", true));
+    private final Setting.Bool hideMined = setting(Setting.Bool.standalone("Hide mined ores", true), "Hide predicted ores whose block is already gone.");
     private final Setting.Action verify = setting(new Setting.Action("Verify accuracy", () -> INSTANCE.verifyRequested = true));
     private final Setting.Action verifyBedrock = setting(new Setting.Action("Verify with bedrock", () -> INSTANCE.bedrockRequested = true));
     private final List<Ore> ores = new ArrayList<>();

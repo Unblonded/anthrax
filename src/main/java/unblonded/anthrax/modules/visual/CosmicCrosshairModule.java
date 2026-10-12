@@ -1,54 +1,48 @@
 package unblonded.anthrax.modules.visual;
 
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElement;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.Minecraft;
-import net.minecraft.resources.Identifier;
+import unblonded.anthrax.gui.CrosshairRenderer;
 import unblonded.anthrax.modules.FeatureModule;
 import unblonded.anthrax.modules.Setting;
 
-/** Animated cosmic rings/rays in place of the vanilla crosshair while enabled. */
+/** Animated, reactive crosshair in place of the vanilla one (drawing lives in {@link CrosshairRenderer}). */
 public final class CosmicCrosshairModule extends FeatureModule {
     public static final CosmicCrosshairModule INSTANCE = new CosmicCrosshairModule();
-    private final Setting.Num size = setting(Setting.Num.standalone("Size", 20, 1, 100, 1));
-    private final Setting.Bool lines = setting(Setting.Bool.standalone("Show crosshair lines", false));
+    private final Setting.Mode style = setting(Setting.Mode.standalone("Style", "Orbit", "Orbit", "Reticle", "Pulse", "Nova", "Minimal"));
+    private final Setting.Mode color = setting(Setting.Mode.standalone("Color", "Theme", "Theme", "Rainbow", "White", "Cyan", "Pink", "Lime", "Gold"));
+    private final Setting.Num size = setting(Setting.Num.standalone("Crosshair size", 10, 4, 30, 1));
+    private final Setting.Num thickness = setting(Setting.Num.standalone("Thickness", 2, 1, 4, .5));
+    private final Setting.Num speed = setting(Setting.Num.standalone("Animation speed", 1, 0, 3, .1));
+    private final Setting.Num opacity = setting(Setting.Num.standalone("Opacity", 100, 20, 100, 5));
+    private final Setting.Bool spread = setting(Setting.Bool.standalone("Spread when moving", true), "The crosshair opens up while you walk, sprint or jump.");
+    private final Setting.Bool cooldown = setting(Setting.Bool.standalone("Attack cooldown ring", true));
+    private final Setting.Bool hitMarker = setting(Setting.Bool.standalone("Hit marker", true));
+    private final Setting.Bool targetLock = setting(Setting.Bool.standalone("Lock onto targets", true), "Tighten and turn red when you aim at a mob or player.");
+    private final Setting.Bool outline = setting(Setting.Bool.standalone("Dark outline", true));
+    private final Setting.Bool glow = setting(Setting.Bool.standalone("Glow", true));
+
     private CosmicCrosshairModule() {
-        super("Show Cosmic Crosshair", "Replace the vanilla crosshair with animated rings", "Visuals", false);
+        super("Show Cosmic Crosshair", "Animated crosshair that reacts to movement, cooldown, hits and targets", "Visuals", false);
         HudElementRegistry.replaceElement(VanillaHudElements.CROSSHAIR, vanilla -> (graphics, delta) -> {
             Minecraft mc = Minecraft.getInstance();
             if (!isEnabled() || mc.player == null || mc.gui.screen() != null) { vanilla.extractRenderState(graphics, delta); return; }
-            draw(graphics, mc);
+            if (!mc.options.getCameraType().isFirstPerson()) return;   // vanilla hides it in third person too
+            unblonded.anthrax.modules.Safe.run(this, () -> CrosshairRenderer.render(graphics, mc));
         });
     }
 
-    private void draw(net.minecraft.client.gui.GuiGraphicsExtractor g, Minecraft mc) {
-        float t = System.currentTimeMillis() / 1000f, radius = (float)size.get();
-        int cx = mc.getWindow().getGuiScaledWidth()/2, cy = mc.getWindow().getGuiScaledHeight()/2;
-        for (int ring=0; ring<5; ring++) {
-            float rr = radius * (.4f + ring*.15f), pulse = .7f + .3f*(float)Math.sin(t*3+ring);
-            for (int i=0; i<36; i++) {
-                float a = t*1.2f + (float)(Math.PI*2*i/36);
-                float wave = 1 + .15f*(float)Math.sin(a*6+t*4);
-                int x = cx + Math.round((float)Math.cos(a)*rr*wave), y = cy + Math.round((float)Math.sin(a)*rr*wave);
-                int color = hsv(.28f + .3f*(float)(Math.sin(t+ring*.5)*.5+.5), .9f, pulse);
-                g.fill(x-1, y-1, x+2, y+2, color);
-            }
-        }
-        for (int i=0; i<8; i++) {
-            float a = t*.6f + (float)(Math.PI*2*i/8), r = radius*1.5f*(.5f+.5f*(float)Math.sin(t*2+i));
-            int x2 = cx + Math.round((float)Math.cos(a)*r), y2 = cy + Math.round((float)Math.sin(a)*r);
-            line(g, cx, cy, x2, y2, hsv(.3f+.1f*(float)Math.sin(t*2+i), .9f, .9f));
-        }
-        if (lines.get()) {
-            int len = Math.round(radius*.7f), c = 0xF2FFFFFF;
-            g.fill(cx-len, cy-1, cx+len, cy+1, c); g.fill(cx-1, cy-len, cx+1, cy+len, c);
-        }
-    }
-
-    private static int hsv(float hue, float sat, float val) { return 0xFF000000 | (java.awt.Color.HSBtoRGB(hue, sat, val) & 0xFFFFFF); }
-    private static void line(net.minecraft.client.gui.GuiGraphicsExtractor g, int x1, int y1, int x2, int y2, int color) {
-        int dx=x2-x1, dy=y2-y1, steps=Math.max(Math.abs(dx),Math.abs(dy));
-        for (int i=0; i<=steps; i++) { int x=x1+(steps==0?0:dx*i/steps), y=y1+(steps==0?0:dy*i/steps); g.fill(x,y,x+2,y+2,color); }
-    }
+    public String style() { return style.get(); }
+    public String color() { return color.get(); }
+    public float size() { return (float) size.get(); }
+    public float thickness() { return (float) thickness.get(); }
+    public float speed() { return (float) speed.get(); }
+    public float opacity() { return (float) opacity.get() / 100f; }
+    public boolean spread() { return spread.get(); }
+    public boolean cooldown() { return cooldown.get(); }
+    public boolean hitMarker() { return hitMarker.get(); }
+    public boolean targetLock() { return targetLock.get(); }
+    public boolean outline() { return outline.get(); }
+    public boolean glow() { return glow.get(); }
 }

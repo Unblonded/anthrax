@@ -9,8 +9,8 @@ import unblonded.anthrax.modules.Setting;
 public final class VelocityModule extends FeatureModule {
     public static final VelocityModule INSTANCE = new VelocityModule();
 
-    private final Setting.Num horizontal = setting(Setting.Num.standalone("Horizontal %", 0, 0, 100, 5));
-    private final Setting.Num vertical = setting(Setting.Num.standalone("Vertical %", 0, 0, 100, 5));
+    private final Setting.Num horizontal = setting(Setting.Num.standalone("Horizontal %", 0, 0, 100, 5), "How much sideways knockback you still take (0 = none).");
+    private final Setting.Num vertical = setting(Setting.Num.standalone("Vertical %", 0, 0, 100, 5), "How much upward knockback you still take (0 = none).");
     private final Setting.Bool explosions = setting(Setting.Bool.standalone("Explosions", true));
     private final Setting.Bool inWater = setting(Setting.Bool.standalone("While in water", true));
 
