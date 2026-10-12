@@ -59,6 +59,7 @@ public final class CrystalAuraModule extends FeatureModule {
                             EndCrystal.class,
                             client.player.getBoundingBox().inflate(8),
                             e -> e.isAlive() && e.distanceToSqr(client.player.getEyePosition()) <= REACH_SQ
+                                    && ServerSafety.canReach(client.player, e)
                     ).stream()
                     .min(Comparator.comparingDouble(e -> e.distanceToSqr(client.player)))
                     .ifPresent(crystal -> {
@@ -95,7 +96,7 @@ public final class CrystalAuraModule extends FeatureModule {
 
         boolean close = Math.abs(wrapDegrees(targetYaw - newYaw)) < 0.5f
                 && Math.abs(targetPitch - newPitch) < 0.5f;
-        if (isLookingAtCrystal(player, crystal) || close || stepCount >= MAX_STEPS) {
+        if ((isLookingAtCrystal(player, crystal) || close || stepCount >= MAX_STEPS) && !ServerSafety.paused()) {
             setRotation(player, targetYaw, targetPitch);
             client.gameMode.attack(player, crystal);
             player.swing(InteractionHand.MAIN_HAND);

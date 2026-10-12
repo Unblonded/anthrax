@@ -26,6 +26,8 @@ public final class SurroundModule extends FeatureModule {
     private final Setting.Bool ender = setting(Setting.Bool.standalone("Use ender chests too", true));
     private final Setting.Bool disableOnMove = setting(Setting.Bool.standalone("Disable when you move", true));
     private BlockPos anchor;
+    /** Walking onto the block centre (a teleport there would be rubber-banded by the server). */
+    private boolean centering;
 
     public SurroundModule() {
         super("Surround", "Box your feet in with obsidian so crystals cannot be placed next to you", "Combat", false);
@@ -36,16 +38,23 @@ public final class SurroundModule extends FeatureModule {
         anchor = null;
         if (!enabled || mc.player == null) return;
         anchor = mc.player.blockPosition();
-        if (center.get()) {
-            mc.player.setPos(anchor.getX() + 0.5, mc.player.getY(), anchor.getZ() + 0.5);
-            mc.player.setDeltaMovement(0, mc.player.getDeltaMovement().y, 0);
-        }
+        centering = center.get();
+    }
+
+    /** Nudges our own motion toward the block centre at walking speed; true while still on the way. */
+    private boolean walkToCenter(LocalPlayer self) {
+        double dx = anchor.getX() + .5 - self.getX(), dz = anchor.getZ() + .5 - self.getZ();
+        if (Math.abs(dx) < .05 && Math.abs(dz) < .05 || !self.onGround()) return false;
+        double max = .12;   // under vanilla walking speed, so the server's movement check never objects
+        self.setDeltaMovement(Math.max(-max, Math.min(max, dx * .6)), self.getDeltaMovement().y, Math.max(-max, Math.min(max, dz * .6)));
+        return true;
     }
 
     @Override public void tick(Minecraft mc) {
         LocalPlayer self = mc.player;
-        if (self == null || mc.level == null || mc.gameMode == null) return;
+        if (self == null || !ServerSafety.ready(mc)) return;
         if (anchor == null) anchor = self.blockPosition();
+        if (centering && !walkToCenter(self)) centering = false;
         if (!self.blockPosition().equals(anchor)) {
             if (disableOnMove.get()) { setEnabled(false); return; }
             anchor = self.blockPosition();
@@ -58,7 +67,7 @@ public final class SurroundModule extends FeatureModule {
         boolean switched = false;
         for (BlockPos pos : targets()) {
             if (budget <= 0) break;
-            if (!mc.level.getBlockState(pos).canBeReplaced() || blocked(mc, pos)) continue;
+            if (!mc.level.getBlockState(pos).canBeReplaced() || blocked(mc, pos) || !ServerSafety.canReach(self, pos)) continue;
             BlockHitResult hit = support(mc, pos);
             if (hit == null) continue;
             if (!switched) { self.getInventory().setSelectedSlot(slot); switched = true; }

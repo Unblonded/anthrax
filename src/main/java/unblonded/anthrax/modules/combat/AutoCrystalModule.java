@@ -51,6 +51,7 @@ public final class AutoCrystalModule extends FeatureModule {
     private void tickAutoCrystal(Minecraft client) {
         if (!isEnabled() || target == null) return;
         if (client.player == null || client.player != owner || client.level == null || client.gameMode == null || client.level != targetLevel) { reset(client); return; }
+        if (ServerSafety.paused()) return;
         long now = System.currentTimeMillis();
         if (target.isRemoved() || !target.isAlive() || client.player.distanceToSqr(target) > 144) { reset(client); return; }
         if (phase == 0 && now - phaseAt >= (long) placeDelay.get()) {
@@ -59,7 +60,7 @@ public final class AutoCrystalModule extends FeatureModule {
             int crystalSlot = findItem(client, Items.END_CRYSTAL);
             if (crystalSlot < 0) { reset(client); return; }
             client.player.getInventory().setSelectedSlot(crystalSlot);
-            BlockHitResult hit = new BlockHitResult(Vec3.atCenterOf(targetPos), Direction.UP, targetPos, false);
+            BlockHitResult hit = ServerSafety.click(targetPos, Direction.UP);
             client.gameMode.useItemOn(client.player, InteractionHand.MAIN_HAND, hit);
             client.player.swing(InteractionHand.MAIN_HAND);
             phase = 1;
@@ -67,7 +68,7 @@ public final class AutoCrystalModule extends FeatureModule {
         } else if (phase == 1 && now - phaseAt >= (long) attackDelay.get()) {
             EndCrystal crystal = client.level.getEntitiesOfClass(EndCrystal.class, new AABB(targetPos).inflate(2))
                     .stream().min(java.util.Comparator.comparingDouble(e -> e.distanceToSqr(target))).orElse(null);
-            if (crystal != null) {
+            if (crystal != null && ServerSafety.canReach(client.player, crystal)) {
                 client.player.getInventory().setSelectedSlot(originalSlot);
                 client.gameMode.attack(client.player, crystal);
                 client.player.swing(InteractionHand.MAIN_HAND);
@@ -84,7 +85,8 @@ public final class AutoCrystalModule extends FeatureModule {
             var state = client.level.getBlockState(p);
             if ((!state.is(Blocks.OBSIDIAN) && !state.is(Blocks.BEDROCK))
                     || !client.level.getBlockState(p.above()).isAir()
-                    || !client.level.getBlockState(p.above(2)).isAir()) continue;
+                    || !client.level.getBlockState(p.above(2)).isAir()
+                    || !ServerSafety.canReach(client.player, p)) continue;
             double distance = client.player.distanceToSqr(Vec3.atCenterOf(p));
             if (distance < bestDist) { best = p.immutable(); bestDist = distance; }
         }

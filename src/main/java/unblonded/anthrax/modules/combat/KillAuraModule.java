@@ -44,6 +44,7 @@ public final class KillAuraModule extends FeatureModule {
         target = null;
         if (self == null || mc.level == null || mc.gameMode == null || mc.gui.screen() != null || self.isSpectator()) return;
         if (pauseUsing.get() && self.isUsingItem()) return;
+        if (ServerSafety.paused()) return;
         if (weaponOnly.get() && !CombatUtil.isWeapon(self.getMainHandItem())) return;
 
         double reachSq = range.get() * range.get(), best = Double.MAX_VALUE;

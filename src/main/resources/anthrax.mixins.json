@@ -35,6 +35,7 @@
     "EntityTurnMixin",
     "MouseScrollMixin",
     "MouseButtonMixin",
+    "ServerTeleportMixin",
     "CommandSuggestionsMixin",
     "CombatHooksMixin",
     "VelocityMixin",

@@ -56,10 +56,11 @@ public final class AutoAnchorModule extends FeatureModule {
                 reset(client);
                 return;
             }
+            if (ServerSafety.paused() || !ServerSafety.canReach(client.player, pending)) return;
             if (chargeAt == 0) chargeAt = scheduledTime();
             if (System.currentTimeMillis() < chargeAt) return;
             var player = client.player;
-            BlockHitResult hit = new BlockHitResult(Vec3.atCenterOf(pending), Direction.UP, pending, false);
+            BlockHitResult hit = ServerSafety.click(pending, Direction.UP);
             if (stage == 0) {
                 player.getInventory().setSelectedSlot(glowstoneSlot);
                 client.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);

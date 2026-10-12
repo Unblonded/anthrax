@@ -36,6 +36,7 @@ public final class CrystalSpamModule extends FeatureModule {
         if (!isEnabled()) return;
         if (client.player == null || client.level == null || client.gameMode == null) { reset(); return; }
         if (owner != null && (client.player != owner || client.level != world)) { reset(); return; }
+        if (ServerSafety.paused()) return;
         long now = System.currentTimeMillis();
         if (now < nextAction || !client.player.getMainHandItem().is(Items.END_CRYSTAL)) return;
         if (waitingForCrystal) {
@@ -46,7 +47,7 @@ public final class CrystalSpamModule extends FeatureModule {
             } else {
                 EndCrystal found = client.level.getEntitiesOfClass(EndCrystal.class, new AABB(pendingBase).inflate(1, 2, 1))
                         .stream().findFirst().orElse(null);
-                if (found != null) {
+                if (found != null && ServerSafety.canReach(client.player, found)) {
                     client.gameMode.attack(client.player, found);
                     client.player.swing(InteractionHand.MAIN_HAND);
                     waitingForCrystal = false;
@@ -59,7 +60,7 @@ public final class CrystalSpamModule extends FeatureModule {
         }
         BlockPos base = findClosestBase(client);
         if (base == null) return;
-        BlockHitResult hit = new BlockHitResult(Vec3.atCenterOf(base), Direction.UP, base, false);
+        BlockHitResult hit = ServerSafety.click(base, Direction.UP);
         client.gameMode.useItemOn(client.player, InteractionHand.MAIN_HAND, hit);
         client.player.swing(InteractionHand.MAIN_HAND);
         pendingBase = base;
@@ -80,7 +81,8 @@ public final class CrystalSpamModule extends FeatureModule {
             var state = client.level.getBlockState(pos);
             if ((!state.is(Blocks.OBSIDIAN) && !state.is(Blocks.BEDROCK))
                     || !client.level.getBlockState(pos.above()).isAir()
-                    || !client.level.getBlockState(pos.above(2)).isAir()) continue;
+                    || !client.level.getBlockState(pos.above(2)).isAir()
+                    || !ServerSafety.canReach(client.player, pos)) continue;
             double distance = client.player.distanceToSqr(Vec3.atCenterOf(pos));
             if (distance < bestDistance) { best = pos.immutable(); bestDistance = distance; }
         }

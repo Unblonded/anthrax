@@ -46,6 +46,7 @@ public final class SelfCrystalModule extends FeatureModule {
             pending.clear(); pendingLevel = null; owner = null;
             return;
         }
+        if (ServerSafety.paused()) return;
         long now = System.currentTimeMillis();
         pending.entrySet().removeIf(entry -> {
             if (now - entry.getValue() > 5000) return true;
@@ -53,7 +54,7 @@ public final class SelfCrystalModule extends FeatureModule {
             BlockPos pos = entry.getKey();
             var box = new AABB(pos).inflate(1, 2, 1);
             EndCrystal crystal = client.level.getEntitiesOfClass(EndCrystal.class, box).stream().findFirst().orElse(null);
-            if (crystal == null) return false;
+            if (crystal == null || !ServerSafety.canReach(client.player, crystal)) return false;
             client.gameMode.attack(client.player, crystal);
             client.player.swing(InteractionHand.MAIN_HAND);
             return true;
