@@ -12,6 +12,7 @@
     "CrystalPlaceMixin",
     "ChatFilterMixin",
     "ContainerScanMixin",
+    "ScreenOverlayMixin",
     "NoRenderMixin",
     "NoVignetteMixin",
     "WeatherRenderMixin",

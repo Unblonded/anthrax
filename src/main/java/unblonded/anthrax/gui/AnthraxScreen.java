@@ -151,7 +151,10 @@ public class AnthraxScreen extends Screen {
     private Setting.Num draggingSlider;
     private Drag activeDrag;
     private Setting.Text focusedText;
-    private boolean selectAllText;
+    /** Caret/selection state per text box, kept while the menu is open so clicks and selections persist. */
+    private final Map<Object, TextEdit> edits = new java.util.IdentityHashMap<>();
+    private final TextEdit searchEdit = new TextEdit(() -> search, v -> { search = v; scrollTarget = 0; }, 48);
+    private int clickX;
     private final Map<String, Float> detachedScroll = new java.util.HashMap<>();
     private final Map<String, Float> detachedScrollTarget = new java.util.HashMap<>();
     private final Map<String, WindowRect> detachedRects = new java.util.HashMap<>();
@@ -438,18 +441,17 @@ public class AnthraxScreen extends Screen {
         if (searchFocused && FANCY) roundFast(g, x - u(3), y - u(3), w + u(6), h + u(6), h / 2 + u(3), alpha(accent, 0x18));
         icon(g, x + u(14), cy, Icons.MAGNIFYING_GLASS, active ? accent : Theme.MUTED);
         int tx = x + u(26), maxW = w - u(26) - u(24);
-        String shown = fitTail(search, maxW);
-        if (search.isEmpty()) {
-            if (!searchFocused) text(g, tx, cy, "Search", Theme.MUTED, false);
-            if (!searchFocused) textR(g, x + w - u(12), cy, "Ctrl F", Theme.DIM, false);
+        if (search.isEmpty() && !searchFocused) {
+            text(g, tx, cy, "Search", Theme.MUTED, false);
+            textR(g, x + w - u(12), cy, "Ctrl F", Theme.DIM, false);
         } else {
-            text(g, tx, cy, shown, Theme.TEXT, false);
+            searchEdit.draw(g, tx, cy, maxW, y, h, Theme.TEXT, accent, searchFocused);
         }
-        if (searchFocused && (System.currentTimeMillis() / 500) % 2 == 0) {
-            int caretX = tx + (search.isEmpty() ? 0 : textWidth(shown, false)) + S;
-            fill(g, caretX, cy - u(7), S, u(14), accent);
-        }
-        hit(x, y, w, h, false, b -> { searchFocused = true; focusedText = null; }, null);
+        hit(x, y, w, h, false, b -> {
+            searchFocused = true;
+            focusedText = null;
+            searchEdit.press(searchEdit.indexAt(clickX, tx), Minecraft.getInstance().hasShiftDown());
+        }, (px, py) -> { if (searchFocused) searchEdit.drag(searchEdit.indexAt(px, tx)); });
         if (!search.isEmpty()) {
             int cx = x + w - u(14);
             boolean clearHov = inside(mx, my, cx - u(9), y, u(18), h);
@@ -1105,23 +1107,16 @@ public class AnthraxScreen extends Screen {
                     focused ? alpha(accent, 0xE0) : fieldHov ? 0x2AFFFFFF : 0x12FFFFFF,
                     focused ? alpha(accent, 0x90) : fieldHov ? 0x3AFFFFFF : 0x22FFFFFF);
             String value = field.get();
-            int innerW = bw - u(18);
-            if (focused && selectAllText && !value.isEmpty()) {
-                String shownSel = fitTail(value, innerW);
-                fill(g, bx + u(8), by + u(5), textWidth(shownSel, false) + S, bh - u(10), alpha(accent, 0x60));
-            }
-            if (value.isEmpty() && !focused) {
-                text(g, bx + u(9), by + bh / 2, "Click to type", Theme.DIM, false);
-            } else {
-                String visible = fitTail(value, innerW);
-                text(g, bx + u(9), by + bh / 2, visible, focused ? 0xFFFFFFFF : Theme.SUBTEXT, false);
-                if (focused && (System.currentTimeMillis() / 500 % 2 == 0))
-                    fill(g, bx + u(9) + textWidth(visible, false) + S, by + bh / 2 - u(7), S, u(14), accent);
-            }
+            int innerW = bw - u(18), textX = bx + u(9);
+            TextEdit edit = editFor(field);
+            if (value.isEmpty() && !focused) text(g, textX, by + bh / 2, "Click to type", Theme.DIM, false);
+            else edit.draw(g, textX, by + bh / 2, innerW, by, bh, focused ? 0xFFFFFFFF : Theme.SUBTEXT, accent, focused);
             if (interactive) hit(bx, by, bw, bh, true, btn -> {
-                if (btn == 2) field.reset();
-                else { focusedText = field; searchFocused = false; }
-            }, null);
+                if (btn == 2) { field.reset(); return; }
+                focusedText = field;
+                searchFocused = false;
+                edit.press(edit.indexAt(clickX, textX), Minecraft.getInstance().hasShiftDown());
+            }, (px, py) -> { if (focusedText == field) edit.drag(edit.indexAt(px, textX)); });
             resetGlyph(g, s, lx + textWidth(label, false), y + rh / 2, x, y, w, rh, interactive);
         } else if (s instanceof Setting.Action action) {
             int bw = Math.min(Math.max(u(136), textWidth(action.name, false) + u(30)), w - u(32)), bh = u(24), bx = rx - bw, by = y + (rh - bh) / 2;
@@ -1191,6 +1186,10 @@ public class AnthraxScreen extends Screen {
     }
 
     /** Longest suffix of value that fits maxWidth (text fields show the end being typed). */
+    private TextEdit editFor(Setting.Text field) {
+        return edits.computeIfAbsent(field, f -> new TextEdit(field::get, field::set, field.maxLength));
+    }
+
     private static String fitTail(String value, int maxWidth) {
         if (value == null || value.isEmpty() || maxWidth <= 0) return "";
         if (textWidth(value, false) <= maxWidth) return value;
@@ -1240,8 +1239,8 @@ public class AnthraxScreen extends Screen {
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         focusedText = null;
-        selectAllText = false;
         searchFocused = false;
+        clickX = Math.round((float) event.x() * gs / uiOverride);
         // listening for a bind: middle and side mouse buttons bind (left/right stay for clicking)
         if (binding != null && event.button() >= 2) {
             GuiModule module = binding;
@@ -1276,15 +1275,12 @@ public class AnthraxScreen extends Screen {
             // Typing anywhere searches, like a command palette.
             if (GuiPreferences.separateCategoryWindows() || !event.isAllowedChatCharacter()) return super.charTyped(event);
             if (!searchFocused && Character.isWhitespace(event.codepoint())) return super.charTyped(event);
-            searchFocused = true;
-            if (search.length() < 48) search += event.codepointAsString();
-            scrollTarget = 0;
+            if (!searchFocused) { searchFocused = true; searchEdit.key(GLFW.GLFW_KEY_END, false, false); }
+            searchEdit.insert(event.codepointAsString());
             return true;
         }
         if (!event.isAllowedChatCharacter()) return super.charTyped(event);
-        String value = selectAllText ? "" : focusedText.get();
-        selectAllText = false;
-        if (value.length() < focusedText.maxLength) focusedText.set(value + event.codepointAsString());
+        editFor(focusedText).insert(event.codepointAsString());
         return true;
     }
 
@@ -1307,42 +1303,13 @@ public class AnthraxScreen extends Screen {
             swallowNextChar = true;
             return true;
         }
+        boolean shift = (event.modifiers() & GLFW.GLFW_MOD_SHIFT) != 0;
         if (focusedText != null) {
-            if (control && key == GLFW.GLFW_KEY_A) {
-                selectAllText = true;
-                return true;
-            }
-            if (control && key == GLFW.GLFW_KEY_V) {
-                String clipboard = Minecraft.getInstance().keyboardHandler.getClipboard();
-                if (clipboard != null) {
-                    clipboard = clipboard.replace('\r', ' ').replace('\n', ' ').replace('\t', ' ');
-                    String prefix = selectAllText ? "" : focusedText.get();
-                    int remaining = focusedText.maxLength - prefix.length();
-                    if (remaining > 0) focusedText.set(prefix + clipboard.substring(0, Math.min(remaining, clipboard.length())));
-                }
-                selectAllText = false;
-                return true;
-            }
-            if (control && (key == GLFW.GLFW_KEY_C || key == GLFW.GLFW_KEY_X)) {
-                if (selectAllText) {
-                    Minecraft.getInstance().keyboardHandler.setClipboard(focusedText.get());
-                    if (key == GLFW.GLFW_KEY_X) focusedText.set("");
-                    selectAllText = false;
-                }
-                return true;
-            }
-            if (key == GLFW.GLFW_KEY_BACKSPACE) {
-                String value = focusedText.get();
-                if (selectAllText || control) focusedText.set("");
-                else if (!value.isEmpty()) focusedText.set(value.substring(0, value.length() - 1));
-                selectAllText = false;
-                return true;
-            }
-            if (key == GLFW.GLFW_KEY_ENTER || key == GLFW.GLFW_KEY_KP_ENTER || key == GLFW.GLFW_KEY_ESCAPE) {
+            if (key == GLFW.GLFW_KEY_ENTER || key == GLFW.GLFW_KEY_KP_ENTER || key == GLFW.GLFW_KEY_ESCAPE || key == GLFW.GLFW_KEY_TAB) {
                 focusedText = null;
-                selectAllText = false;
                 return true;
             }
+            editFor(focusedText).key(key, control, shift);
             return true;
         }
         if (control && key == GLFW.GLFW_KEY_F && !GuiPreferences.separateCategoryWindows()) {
@@ -1350,16 +1317,7 @@ public class AnthraxScreen extends Screen {
             return true;
         }
         if (searchFocused) {
-            if (key == GLFW.GLFW_KEY_BACKSPACE) {
-                if (control) search = "";
-                else if (!search.isEmpty()) search = search.substring(0, search.length() - 1);
-                return true;
-            }
-            if (control && key == GLFW.GLFW_KEY_V) {
-                String clipboard = Minecraft.getInstance().keyboardHandler.getClipboard();
-                if (clipboard != null) search = (search + clipboard.replaceAll("\\s+", " ")).substring(0, Math.min(48, search.length() + clipboard.length()));
-                return true;
-            }
+            if (searchEdit.key(key, control, shift)) return true;
             if (key == GLFW.GLFW_KEY_ENTER || key == GLFW.GLFW_KEY_KP_ENTER) {
                 // Enter toggles the top result, so "type, Enter" works like a launcher.
                 List<GuiModule> results = searching() ? searchResults() : List.of();

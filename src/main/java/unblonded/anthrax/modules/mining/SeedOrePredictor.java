@@ -203,8 +203,17 @@ final class SeedOrePredictor {
 
         Map<Long, Long2ObjectOpenHashMap<BlockState>> placed = new HashMap<>();
         for (int[] c : todo) placed.put(ChunkPos.pack(c[0], c[1]), run.simulate(c[0], c[1], List.of()));
+        // Anti-xray: if the world plainly disagrees with the prediction, the server is sending fake blocks.
+        // Re-run treating every buried block anti-xray could have faked as plain stone, and skip the
+        // ordering passes (they read ores from the world, which can no longer be trusted).
+        boolean antiXray = agreement(snap, placed) < 0.6;
+        lastAntiXray = antiXray;
+        if (antiXray) {
+            run.antiXray = true;
+            for (int[] c : todo) placed.put(ChunkPos.pack(c[0], c[1]), run.simulate(c[0], c[1], List.of()));
+        }
         Map<Long, List<Long>> earlier = Map.of();
-        for (int pass = 0; pass < 2; pass++) {
+        for (int pass = 0; pass < 2 && !antiXray; pass++) {
             earlier = order(snap, placed);
             if (earlier.isEmpty()) break;
             Map<Long, Long2ObjectOpenHashMap<BlockState>> next = new HashMap<>();
@@ -216,7 +225,7 @@ final class SeedOrePredictor {
             }
             placed = next;
         }
-        earlier = refineOrder(run, snap, todo, placed, earlier);
+        if (!antiXray) earlier = refineOrder(run, snap, todo, placed, earlier);
 
         // Merge the chunks' ores. Stone blobs (granite, tuff...) never hide an ore: ores replace them, and
         // they cannot replace ores. When two chunks put different ores on one block, the chunk decorated
@@ -240,6 +249,33 @@ final class SeedOrePredictor {
         }
         return new ArrayList<>(hits.values());
     }
+
+    /** Whether the last prediction ran in anti-xray mode. */
+    static volatile boolean lastAntiXray;
+
+    /** Fraction of predicted ores that are in the world as predicted (1 with nothing to compare). */
+    private static double agreement(Snapshot snap, Map<Long, Long2ObjectOpenHashMap<BlockState>> placed) {
+        int total = 0, same = 0;
+        for (Long2ObjectOpenHashMap<BlockState> m : placed.values())
+            for (var e : m.long2ObjectEntrySet()) {
+                Block b = e.getValue().getBlock();
+                if (SeedRayModule.oreName(b) == null) continue;
+                BlockPos p = BlockPos.of(e.getLongKey());
+                total++;
+                if (snap.get(p.getX(), p.getY(), p.getZ()).getBlock() == b) same++;
+            }
+        return total < 40 ? 1 : same / (double) total;
+    }
+
+    /**
+     * Blocks anti-xray plugins commonly fake inside solid rock (Paper's hidden and replacement block
+     * lists): ores are handled through {@code productBase}; these are the rest.
+     */
+    private static final Set<Block> PLAIN = Set.of(Blocks.STONE, Blocks.DEEPSLATE, Blocks.NETHERRACK);
+    private static final Set<Block> FAKEABLE = Set.of(Blocks.MAGMA_BLOCK, Blocks.GLOWSTONE, Blocks.BONE_BLOCK,
+            Blocks.NETHER_BRICKS, Blocks.POLISHED_BLACKSTONE_BRICKS, Blocks.GILDED_BLACKSTONE, Blocks.OAK_PLANKS,
+            Blocks.MOSSY_COBBLESTONE, Blocks.OBSIDIAN, Blocks.CHEST, Blocks.ENDER_CHEST, Blocks.CLAY,
+            Blocks.RAW_IRON_BLOCK, Blocks.RAW_COPPER_BLOCK, Blocks.RAW_GOLD_BLOCK, Blocks.SPAWNER);
 
     /**
      * Neighbours whose veins touch the same blocks with the same ore leave no visible clue about order,
@@ -349,6 +385,7 @@ final class SeedOrePredictor {
         final Map<Long, Integer> floor = new HashMap<>();
         Long2ObjectOpenHashMap<BlockState> placed;
         List<Long2ObjectOpenHashMap<BlockState>> neighbours;
+        boolean antiXray;
 
         Run(Snapshot snap, Setup setup, OreVeinSim veins, long seed) {
             this.snap = snap;
@@ -408,6 +445,11 @@ final class SeedOrePredictor {
                 if (s != null) return s;
             }
             BlockState now = snap.get(x, y, z);
+            // anti-xray only fakes blocks you cannot see, i.e. blocks not touching air
+            // (and hides ores, raw ore blocks and deepslate variants behind plain stone, so that is rebuilt too)
+            if (antiXray && (FAKEABLE.contains(now.getBlock()) || setup.productBase.containsKey(now.getBlock()) || PLAIN.contains(now.getBlock()))
+                    && !exposed(x, y, z))
+                return plainRock(x, y, z);
             BlockState base = setup.productBase.get(now.getBlock());
             if (base != null) {
                 BlockState vein = veins == null ? null : veins.at(x, y, z);
@@ -419,6 +461,22 @@ final class SeedOrePredictor {
                 return (veins.deepslate(x, y, z) ? Blocks.DEEPSLATE : Blocks.STONE).defaultBlockState();
             }
             return now;
+        }
+
+        private boolean exposed(int x, int y, int z) {
+            for (Direction d : Direction.values()) {
+                BlockState n = snap.get(x + d.getStepX(), y + d.getStepY(), z + d.getStepZ());
+                if (n.isAir() || !n.getFluidState().isEmpty()) return true;
+            }
+            return false;
+        }
+
+        /** What terrain was here before features: a terrain vein block, deepslate or stone, or netherrack. */
+        private BlockState plainRock(int x, int y, int z) {
+            if (snap.nether) return Blocks.NETHERRACK.defaultBlockState();
+            BlockState vein = veins.at(x, y, z);
+            if (vein != null) return vein;
+            return (veins.deepslate(x, y, z) ? Blocks.DEEPSLATE : Blocks.STONE).defaultBlockState();
         }
 
         /** OCEAN_FLOOR_WG at decoration time: the top terrain block, ignoring fluids and anything placed later. */

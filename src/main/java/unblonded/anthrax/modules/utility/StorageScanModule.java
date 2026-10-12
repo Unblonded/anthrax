@@ -25,7 +25,7 @@ public final class StorageScanModule extends FeatureModule {
     private static Object cacheWorld;
     private static Object cachePlayer;
     private static String cacheQuery = "";
-    private StorageScanModule() { super("Storage Scan", "Highlight matching item names in open containers", "Utility", false); }
+    private StorageScanModule() { super("Storage Scan", "Search box in containers: highlights matching items live", "Utility", false); }
 
     public static boolean matches(ItemStack stack) {
         String query = INSTANCE.search.get().trim().toLowerCase(Locale.ROOT);
@@ -54,6 +54,10 @@ public final class StorageScanModule extends FeatureModule {
         synchronized (MATCH_CACHE) { MATCH_CACHE.put(key, match); }
         return match;
     }
+
+    /** The search text (edited from the box in container screens). */
+    public static String query() { return INSTANCE.search.get(); }
+    public static void setQuery(String text) { INSTANCE.search.set(text); }
 
     public static int highlightColor() {
         return switch (INSTANCE.color.get()) {

@@ -45,12 +45,14 @@ public final class SeedRayModule extends FeatureModule {
     private final Setting.Bool deepslateOres = setting(Setting.Bool.standalone("Deepslate ores", true));
     private final Setting.Bool hideMined = setting(Setting.Bool.standalone("Hide mined ores", true));
     private final Setting.Action verify = setting(new Setting.Action("Verify accuracy", () -> INSTANCE.verifyRequested = true));
+    private final Setting.Action verifyBedrock = setting(new Setting.Action("Verify with bedrock", () -> INSTANCE.bedrockRequested = true));
     private final List<Ore> ores = new ArrayList<>();
     private static final Set<String> ALL_ORES = Set.of("Coal", "Iron", "Gold", "Redstone", "Diamond", "Lapis", "Copper",
             "Emerald", "Quartz", "Ancient Debris");
     private volatile List<Marker> markers = List.of();
     private volatile Accuracy lastAccuracy;
-    private volatile boolean verifyRequested;
+    private volatile boolean verifyRequested, bedrockRequested, antiXrayNoticed;
+    private volatile BedrockCheck.Result lastBedrock;
     private final AtomicBoolean predicting = new AtomicBoolean();
     private final AtomicLong generation = new AtomicLong();
     private String requestedKey = "", observedLayout = "";
@@ -99,6 +101,15 @@ public final class SeedRayModule extends FeatureModule {
         int cx = mc.player.chunkPosition().x(), cz = mc.player.chunkPosition().z(), r = (int) radius.get();
         String path = world.dimension().identifier().getPath();
         if (!path.equals("overworld") && !path.equals("the_nether")) { markers = List.of(); return; }
+        if (bedrockRequested) {
+            bedrockRequested = false;
+            SeedOrePredictor.Snapshot bedrockSnap = new SeedOrePredictor.Snapshot(world, cx, cz, r);
+            long checkSeed = seed.getAsLong();
+            PREDICTOR.execute(() -> {
+                try { reportBedrock(BedrockCheck.run(bedrockSnap, checkSeed), checkSeed); }
+                catch (RuntimeException e) { Notifications.error("Seed-Ray", "Bedrock check failed: " + e.getMessage()); }
+            });
+        }
 
         // wait for streamed chunks to settle before snapshotting
         String layout = layout(world, cx, cz, r + 1);
@@ -143,6 +154,10 @@ public final class SeedRayModule extends FeatureModule {
                     out.add(new Marker(h.pos(), color));
                 }
                 if (generation.get() == gen && isEnabled()) markers = out;
+                if (SeedOrePredictor.lastAntiXray && !antiXrayNoticed) {
+                    antiXrayNoticed = true;
+                    Notifications.info("Seed-Ray", "Anti-xray detected: predicting through the fake blocks");
+                }
                 if (verifyNow) report(verify(snap, hits, square, ALL_ORES, true));
             } catch (RuntimeException e) {
                 requestedKey = "";
@@ -193,6 +208,19 @@ public final class SeedRayModule extends FeatureModule {
         return new Accuracy(predicted.size(), actual, matched, inner.size());
     }
 
+    private void reportBedrock(BedrockCheck.Result b, long checked) {
+        lastBedrock = b;
+        String text = String.format("%.2f%% of %d bedrock blocks match seed %d (%d chunks)", b.score() * 100, b.total(), checked, b.chunks());
+        System.out.println("[Seed-Ray] bedrock " + text);
+        if (b.total() == 0) Notifications.error("Seed-Ray", "No loaded chunks to check yet");
+        else if (b.score() > 0.999) Notifications.success("Seed confirmed by bedrock", text);
+        else if (b.score() < 0.8) Notifications.error("Seed does not match", text + ". Wrong seed, or a modded/custom world");
+        else Notifications.info("Seed-Ray", text);
+    }
+
+    public BedrockCheck.Result lastBedrock() { return lastBedrock; }
+    public void requestBedrockCheck() { bedrockRequested = true; }
+
     private void report(Accuracy a) {
         lastAccuracy = a;
         String text = String.format("%d chunks: %.2f%% of predicted ores are real, %.2f%% of real ores predicted (%d/%d)",
@@ -200,7 +228,17 @@ public final class SeedRayModule extends FeatureModule {
         System.out.println("[Seed-Ray] verify " + text);
         if (a.chunks() == 0) Notifications.error("Seed-Ray", "Not enough loaded chunks to verify; stand still a moment");
         else if (a.precision() > 0.97 && a.recall() > 0.97) Notifications.success("Seed-Ray verified", text);
-        else if (a.precision() < 0.2) Notifications.error("Seed-Ray", "Wrong seed, or the server hides ores (anti-xray). " + text);
+        else if (a.precision() < 0.2) {
+            // Bedrock depends only on the seed and is never hidden, so it tells the two causes apart.
+            BedrockCheck.Result b = lastBedrock;
+            if (b != null && b.total() > 0 && b.score() > 0.999)
+                Notifications.info("Seed-Ray: seed is right", "Bedrock matches, so ores here are hidden by anti-xray, "
+                        + "changed by the server, or from an older game version. " + text);
+            else if (b != null && b.total() > 0)
+                Notifications.error("Seed-Ray: wrong seed", "Bedrock does not match either. " + text);
+            else
+                Notifications.error("Seed-Ray", "Wrong seed, or ores here are hidden or altered. Run \"Verify with bedrock\" to tell which. " + text);
+        }
         else Notifications.info("Seed-Ray", text);
     }
 
