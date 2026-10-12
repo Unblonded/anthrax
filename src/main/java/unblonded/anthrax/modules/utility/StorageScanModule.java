@@ -16,7 +16,8 @@ import java.util.Map;
 /** Search text and highlight matching storage/inventory slots while a container screen is open. */
 public final class StorageScanModule extends FeatureModule {
     public static final StorageScanModule INSTANCE = new StorageScanModule();
-    private final Setting.Text search = setting(Setting.Text.standalone("Search for", "", 512));
+    /** The search text lives in memory only: it survives closing containers and the menu, but not a restart. */
+    private static String search = "";
     private final Setting.Mode color = setting(Setting.Mode.standalone("Highlight color", "Red", "Red", "Green", "Blue", "Purple", "White"));
     private record SearchKey(Item item, int count, DataComponentPatch components, String query, Object world, Object player) {}
     private static final Map<SearchKey, Boolean> MATCH_CACHE = new LinkedHashMap<>(256, .75f, true) {
@@ -28,7 +29,7 @@ public final class StorageScanModule extends FeatureModule {
     private StorageScanModule() { super("Storage Scan", "Search box in containers: highlights matching items live", "Utility", false); }
 
     public static boolean matches(ItemStack stack) {
-        String query = INSTANCE.search.get().trim().toLowerCase(Locale.ROOT);
+        String query = search.trim().toLowerCase(Locale.ROOT);
         if (!INSTANCE.isEnabled() || query.isEmpty() || stack.isEmpty()) return false;
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return false;
@@ -56,8 +57,8 @@ public final class StorageScanModule extends FeatureModule {
     }
 
     /** The search text (edited from the box in container screens). */
-    public static String query() { return INSTANCE.search.get(); }
-    public static void setQuery(String text) { INSTANCE.search.set(text); }
+    public static String query() { return search; }
+    public static void setQuery(String text) { search = text == null ? "" : text.substring(0, Math.min(text.length(), 512)); }
 
     public static int highlightColor() {
         return switch (INSTANCE.color.get()) {

@@ -34,7 +34,7 @@ public abstract class AvatarHandOutlineMixin {
     private void anthrax$outlineArm(SubmitNodeCollector collector, ModelPart part, PoseStack pose,
                                    RenderType renderType, int light, int overlay, TextureAtlasSprite sprite) {
         collector.submitModelPart(part, pose, renderType, light, overlay, sprite);
-        if (!HandRenderModule.INSTANCE.outline() || !part.visible) return;
+        if (!HandRenderModule.INSTANCE.outlineArm() || !part.visible) return;
 
         // Gather (pose, cube) pairs for the outermost layer.
         List<Matrix4f> poses = new ArrayList<>();
@@ -89,12 +89,11 @@ public abstract class AvatarHandOutlineMixin {
             if (use.front && (use.count == 1 || use.back || use.tangent)) silhouette.add(entry.getKey());
         }
         if (silhouette.isEmpty()) return;
-        int rgb = Glow.color();
         // Points are already in view space, so draw with an identity pose.
         collector.submitCustomGeometry(new PoseStack(), RenderTypes.linesTranslucent(), (matrix, out) -> {
             for (Edge e : silhouette) {
                 Glow.segment(matrix, out, e.ax / QUANT, e.ay / QUANT, e.az / QUANT,
-                        e.bx / QUANT, e.by / QUANT, e.bz / QUANT, rgb);
+                        e.bx / QUANT, e.by / QUANT, e.bz / QUANT);
             }
         });
     }

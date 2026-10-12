@@ -41,7 +41,7 @@ public abstract class ItemOutlineMixin {
                                      int color, CallbackInfo ci) {
         HandRenderModule module = HandRenderModule.INSTANCE;
         ItemDisplayContext context = ((ItemStackRenderStateAccessor) (Object) this$0).anthrax$getDisplayContext();
-        if (!module.outline() || context != ItemDisplayContext.FIRST_PERSON_RIGHT_HAND
+        if (!module.outlineItems() || context != ItemDisplayContext.FIRST_PERSON_RIGHT_HAND
                 && context != ItemDisplayContext.FIRST_PERSON_LEFT_HAND || quads.isEmpty()) return;
 
         PoseStack.Pose itemPose = pose.last().copy();
@@ -84,9 +84,8 @@ public abstract class ItemOutlineMixin {
             }
             List<Edge> spriteSilhouette = spriteContour(faces.get(0), mask(sprites));
             if (spriteSilhouette.isEmpty()) return;
-            int rgb = Glow.color();
             collector.submitCustomGeometry(pose, RenderTypes.linesTranslucent(), (matrix, out) -> {
-                for (Edge edge : spriteSilhouette) line(matrix, out, edge.a, edge.b, rgb);
+                for (Edge edge : spriteSilhouette) line(matrix, out, edge.a, edge.b);
             });
             return;
         }
@@ -108,9 +107,8 @@ public abstract class ItemOutlineMixin {
         }
         if (silhouette.isEmpty()) return;
 
-        int rgb = Glow.color();
         collector.submitCustomGeometry(pose, RenderTypes.linesTranslucent(), (matrix, out) -> {
-            for (Edge edge : silhouette) line(matrix, out, edge.a, edge.b, rgb);
+            for (Edge edge : silhouette) line(matrix, out, edge.a, edge.b);
         });
     }
 
@@ -202,8 +200,8 @@ public abstract class ItemOutlineMixin {
                 Math.round((ay + (by - ay) * v) * 10000), Math.round((az + (bz - az) * v) * 10000));
     }
 
-    private static void line(PoseStack.Pose pose, VertexConsumer out, Point a, Point b, int rgb) {
-        Glow.segment(pose, out, a.x / 10000f, a.y / 10000f, a.z / 10000f, b.x / 10000f, b.y / 10000f, b.z / 10000f, rgb);
+    private static void line(PoseStack.Pose pose, VertexConsumer out, Point a, Point b) {
+        Glow.segment(pose, out, a.x / 10000f, a.y / 10000f, a.z / 10000f, b.x / 10000f, b.y / 10000f, b.z / 10000f);
     }
 
     private record Point(long x, long y, long z) implements Comparable<Point> {

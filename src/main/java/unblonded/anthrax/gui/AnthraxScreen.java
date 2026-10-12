@@ -118,7 +118,8 @@ public class AnthraxScreen extends Screen {
         @Override protected boolean removeEldestEntry(Map.Entry<FitKey, String> eldest) { return size() > 2048; }
     };
     // search, keybinding and tooltip state
-    private String search = "";
+    /** Kept in memory (static) for the whole session, so reopening the menu keeps the search; never saved to disk. */
+    private static String search = "";
     private boolean searchFocused;
     private final List<GuiModule> searchResults = new ArrayList<>();
     private String searchComputedFor;
