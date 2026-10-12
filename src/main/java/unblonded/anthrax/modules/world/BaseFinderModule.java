@@ -129,6 +129,10 @@ public final class BaseFinderModule extends FeatureModule {
     }
 
     // ---- detection
+    // Intel screen bind: lives in the module settings (bind chip), works while the module is off too.
+    private final Setting.Key intelKey = setting(Setting.Key.standalone("Intel screen key", org.lwjgl.glfw.GLFW.GLFW_KEY_B,
+            () -> Minecraft.getInstance().gui.setScreen(new unblonded.anthrax.gui.IntelScreen())),
+            "Opens Base Intel (bases, structures and the map). Press it again to close.");
     private final Setting.Mode sensitivity = setting(Setting.Mode.standalone("Sensitivity", "Balanced", "Low", "Balanced", "High", "Paranoid"), "How readily a chunk counts as player activity. Higher finds more but also more false finds.");
     private final Setting.Num minBase = setting(Setting.Num.standalone("Min base score", 120, 30, 1500, 10), "Evidence needed before a group of chunks is reported as a base.");
     private final Setting.Bool ignoreNatural = setting(Setting.Bool.standalone("Ignore natural structures", true), "Don't count blocks a village, mineshaft, stronghold and similar would explain.");
@@ -1066,6 +1070,9 @@ public final class BaseFinderModule extends FeatureModule {
             out.add(new LoggedBase(e.time(), e.type(), typeColor(e.type()), e.x(), e.y(), e.z(), e.score(), e.confidence(), e.summary()));
         return out;
     }
+
+    /** The Intel screen key (Setting.Key.NONE when unbound). */
+    public int intelKey() { return intelKey.get(); }
 
     /** Marker color for a base type, shared by the HUD, world markers and the Intel map. */
     public static int colorOf(String type) { return typeColor(type); }

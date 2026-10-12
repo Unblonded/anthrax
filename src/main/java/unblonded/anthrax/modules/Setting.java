@@ -180,6 +180,29 @@ public abstract class Setting {
         @Override public boolean isDefault() { return def == null || def.equals(get()); }
     }
 
+    /**
+     * A key bind that runs an action (like opening a screen) when pressed in game. Shown as a bind chip
+     * in the module's settings; uses the same key space as module binds (mouse buttons included).
+     */
+    public static final class Key extends Setting {
+        public static final int NONE = -1;
+        private final int[] key;
+        private final Runnable onPress;
+        private int def = Integer.MIN_VALUE;
+
+        private Key(String name, int key, Runnable onPress) { super(name); this.key = new int[]{key}; this.onPress = onPress; }
+        public static Key standalone(String name, int defaultKey, Runnable onPress) { return new Key(name, defaultKey, onPress); }
+
+        public int get() { return key[0]; }
+        public void set(int value) { key[0] = value <= 0 ? NONE : value; }
+        public boolean bound() { return key[0] != NONE; }
+        public void press() { onPress.run(); }
+
+        @Override public void captureDefault() { if (def == Integer.MIN_VALUE) def = get(); }
+        @Override public void reset() { if (def != Integer.MIN_VALUE) set(def); }
+        @Override public boolean isDefault() { return def == Integer.MIN_VALUE || def == get(); }
+    }
+
     /** One-shot control, rendered like a button in the module settings list. */
     public static final class Action extends Setting {
         private final Runnable action;

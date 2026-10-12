@@ -62,8 +62,8 @@ public final class NewChunksModule extends FeatureModule implements WorldOverlay
     private final Setting.Bool showNew = setting(Setting.Bool.standalone("Show new chunks", true), "Chunks generated just now: nobody has been here before you.");
     private final Setting.Bool showOld = setting(Setting.Bool.standalone("Show old chunks", true), "Chunks that existed before you arrived: someone loaded them earlier.");
     private final Setting.Bool showOldGen = setting(Setting.Bool.standalone("Show old generation", true), "Chunks made by an older game version, usually areas explored long ago.");
-    private final Setting.Mode height = setting(Setting.Mode.standalone("Draw height", "Feet", "Feet", "Sea level", "Bedrock"),
-            "Where the chunk squares are drawn.");
+    private final Setting.Mode height = setting(Setting.Mode.standalone("Draw height", "Surface", "Surface", "Feet", "Sea level", "Bedrock"),
+            "Surface traces each chunk's border along the ground; the others draw flat squares at that height.");
     private final Setting.Num range = setting(Setting.Num.standalone("Render range (chunks)", 12, 2, 32, 1), "How far away chunk squares are drawn.");
     private final Setting.Num opacity = setting(Setting.Num.standalone("Fill opacity", 18, 0, 60, 2), "How strongly the squares are filled (outlines always show).");
     private final Setting.Bool save = setting(Setting.Bool.standalone("Remember per server", true),
@@ -71,6 +71,10 @@ public final class NewChunksModule extends FeatureModule implements WorldOverlay
     private final Setting.Action open = setting(new Setting.Action("Open chunk list", () ->
             Minecraft.getInstance().execute(() -> Minecraft.getInstance().gui.setScreen(new unblonded.anthrax.gui.ChunkListScreen()))),
             "Browse every found chunk, sorted by distance or time, with a mini map. Also: .chunks in chat.");
+
+    private final Setting.Key listKey = setting(Setting.Key.standalone("Chunk list key", Setting.Key.NONE,
+            () -> Minecraft.getInstance().gui.setScreen(new unblonded.anthrax.gui.ChunkListScreen())),
+            "Opens the chunk list. Press it again to close.");
 
     private final Map<Long, Found> chunks = new HashMap<>();
     private final Map<Long, Long> arrived = new HashMap<>();
@@ -199,6 +203,8 @@ public final class NewChunksModule extends FeatureModule implements WorldOverlay
     }
 
     // ------------------------------------------------------------------ API for the list screen
+    public int listKey() { return listKey.get(); }
+
     public List<Found> found() { return new ArrayList<>(chunks.values()); }
 
     public boolean visible(Kind k) {
@@ -217,30 +223,67 @@ public final class NewChunksModule extends FeatureModule implements WorldOverlay
     // ------------------------------------------------------------------ world overlay
     @Override public boolean active() { return isEnabled() && !chunks.isEmpty(); }
 
+    /** Terrain-following border per chunk, sampled once and refreshed now and then (terrain rarely changes). */
+    private record Border(Vec3[] points, long at) {}
+    private final Map<Long, Border> borders = new HashMap<>();
+
     @Override public void draw(Minecraft mc, float partial, Vec3 eye, Vec3 look) {
         if (mc.player == null || mc.level == null) return;
-        double y = switch (height.get()) {
-            case "Sea level" -> mc.level.getSeaLevel();
-            case "Bedrock" -> mc.level.getMinY() + 1;
+        String mode = height.get();
+        boolean surface = mode.equals("Surface");
+        double flatY = switch (mode) {
+            case "Sea level" -> mc.level.getSeaLevel() + .02;
+            case "Bedrock" -> mc.level.getMinY() + 1.02;
             default -> Math.floor(mc.player.getY(partial)) + .02;
         };
         int pcx = mc.player.getBlockX() >> 4, pcz = mc.player.getBlockZ() >> 4, r = (int) range.get();
         int fillA = (int) (opacity.get() * 2.55);
+        long now = System.currentTimeMillis();
+        if (borders.size() > 4096) borders.clear();
         for (Found c : chunks.values()) {
             if (!visible(c.kind) || Math.abs(c.cx - pcx) > r || Math.abs(c.cz - pcz) > r) continue;
-            double x0 = c.cx * 16 + .3, z0 = c.cz * 16 + .3, x1 = x0 + 15.4, z1 = z0 + 15.4;
-            Vec3 a = new Vec3(x0, y, z0), b = new Vec3(x1, y, z0), cc = new Vec3(x1, y, z1), d = new Vec3(x0, y, z1);
-            if (fillA > 0) {
-                GizmoStyle fill = GizmoStyle.fill(WorldOverlays.argb(fillA, c.kind.color));
-                Gizmos.rect(a, b, cc, d, fill);
-                Gizmos.rect(d, cc, b, a, fill);
+            int line = WorldOverlays.argb(0xC8, c.kind.color), soft = WorldOverlays.argb(0x40, c.kind.color);
+            if (surface) {
+                if (!mc.level.hasChunk(c.cx, c.cz)) continue;
+                long key = ChunkPos.pack(c.cx, c.cz);
+                Border border = borders.get(key);
+                if (border == null || now - border.at > 4000) { border = new Border(trace(mc.level, c.cx, c.cz), now); borders.put(key, border); }
+                Vec3[] p = border.points;
+                for (int i = 0; i < p.length; i++) {
+                    Vec3 a = p[i], b = p[(i + 1) % p.length];
+                    Gizmos.line(a, b, soft, 5f);   // soft halo so the border reads at a glance
+                    Gizmos.line(a, b, line, 1.8f);
+                }
+                continue;
             }
-            int line = WorldOverlays.argb(0xB0, c.kind.color);
-            Gizmos.line(a, b, line, 1.6f);
-            Gizmos.line(b, cc, line, 1.6f);
-            Gizmos.line(cc, d, line, 1.6f);
-            Gizmos.line(d, a, line, 1.6f);
+            double x0 = c.cx * 16 + .25, z0 = c.cz * 16 + .25, x1 = x0 + 15.5, z1 = z0 + 15.5;
+            if (fillA > 0)
+                Gizmos.rect(new Vec3(x0, flatY, z0), new Vec3(x1, flatY, z1), net.minecraft.core.Direction.UP,
+                        GizmoStyle.fill(WorldOverlays.argb(fillA, c.kind.color)));
+            Vec3 a = new Vec3(x0, flatY, z0), b = new Vec3(x1, flatY, z0), cc = new Vec3(x1, flatY, z1), d = new Vec3(x0, flatY, z1);
+            Gizmos.line(a, b, line, 1.8f);
+            Gizmos.line(b, cc, line, 1.8f);
+            Gizmos.line(cc, d, line, 1.8f);
+            Gizmos.line(d, a, line, 1.8f);
         }
+    }
+
+    /** Points every 2 blocks round the chunk's edge, just above the top solid block. */
+    private static Vec3[] trace(ClientLevel level, int cx, int cz) {
+        List<Vec3> pts = new ArrayList<>();
+        int bx = cx << 4, bz = cz << 4;
+        int[][] corners = {{0, 0}, {16, 0}, {16, 16}, {0, 16}};
+        for (int e = 0; e < 4; e++) {
+            int[] from = corners[e], to = corners[(e + 1) % 4];
+            for (int t = 0; t < 16; t += 2) {
+                double x = from[0] + (to[0] - from[0]) * t / 16.0, z = from[1] + (to[1] - from[1]) * t / 16.0;
+                // sample the block just inside the chunk so edges sit on this chunk's own terrain
+                int sx = bx + (int) Math.min(15, Math.max(0, Math.floor(x))), sz = bz + (int) Math.min(15, Math.max(0, Math.floor(z)));
+                int y = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, sx, sz);
+                pts.add(new Vec3(bx + x, y + .08, bz + z));
+            }
+        }
+        return pts.toArray(new Vec3[0]);
     }
 
     @Override public String hudInfo() {

@@ -258,6 +258,7 @@ public final class ModuleConfig {
         if (setting instanceof Setting.Num number) return Double.toString(number.get());
         if (setting instanceof Setting.Mode mode) return mode.get();
         if (setting instanceof Setting.Text text) return text.get();
+        if (setting instanceof Setting.Key key) return Integer.toString(key.get());
         return null; // Actions are buttons, not values.
     }
 
@@ -270,6 +271,7 @@ public final class ModuleConfig {
             } else if (setting instanceof Setting.Mode mode) {
                 mode.set(value);
             } else if (setting instanceof Setting.Text text) text.set(value);
+            else if (setting instanceof Setting.Key key) key.set(Integer.parseInt(value));
         } catch (RuntimeException exception) {
             System.err.println("Anthrax: ignored invalid setting '" + setting.name + "': " + exception.getMessage());
         }

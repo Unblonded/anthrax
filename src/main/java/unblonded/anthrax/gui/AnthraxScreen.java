@@ -1048,8 +1048,12 @@ public class AnthraxScreen extends Screen {
         int pad = u(14), rh = u(30), cy = y + rh / 2 + u(2);
         fill(g, x + u(14), y + u(2), w - u(28), Math.max(1, S / 2), 0x10FFFFFF);
         icon(g, x + pad + u(5), cy, Icons.KEYBOARD, Theme.DIM);
-        text(g, x + pad + u(16), cy, m.hasKey() ? "Toggle key  " + Keybinds.keyName(m.key()) : "No toggle key  (middle-click to bind)",
-                Theme.DIM, false);
+        StringBuilder keys = new StringBuilder(m.hasKey() ? "Toggle key  " + Keybinds.keyName(m.key()) : "No toggle key  (middle-click to bind)");
+        // action binds from the settings (e.g. "Intel screen key") are listed next to the toggle key
+        for (Setting s : m.settings())
+            if (s instanceof Setting.Key k && k.bound())
+                keys.append("    ").append(k.name.replace(" key", "")).append("  ").append(Keybinds.keyName(k.get()));
+        text(g, x + pad + u(16), cy, fitText(keys.toString(), w - pad * 2 - u(16) - u(90), false), Theme.DIM, false);
         boolean dirty = !allDefault(m);
         int bw = u(74), bh = u(18), bx = x + w - pad - bw, by = cy - bh / 2;
         boolean hov = interactive && dirty && inside(mx, my, bx, by, bw, bh) && inside(mx, my, vx, vy, vw, vh);
@@ -1078,6 +1082,8 @@ public class AnthraxScreen extends Screen {
     }
 
     private Setting hoverSetting;
+    /** Key setting waiting for a key press, and its value before the current click (so a second click cancels). */
+    private Setting.Key bindingKey, keyBeforeClick;
     private long hoverSettingSince;
 
     /** What a setting does: its description, plus how to use it (range, options) when that helps. */
@@ -1087,6 +1093,7 @@ public class AnthraxScreen extends Screen {
         else if (s instanceof Setting.Mode md) how = "Options: " + String.join(", ", md.options);
         else if (s instanceof Setting.Bool) how = "Click to toggle. Middle-click resets it.";
         else if (s instanceof Setting.Text) how = "Click and type.";
+        else if (s instanceof Setting.Key) how = "Click the chip, then press a key. Right-click clears.";
         if (s.description == null) return how;
         return how == null ? s.description : s.description + "   " + how;
     }
@@ -1119,6 +1126,27 @@ public class AnthraxScreen extends Screen {
             toggle(g, rx - tw, y + (rh - th) / 2, tw, th, a[0], accent);
             if (interactive) hit(x, y, w, rh, true, btn -> { if (btn == 2) b.reset(); else b.toggle(); }, null);
             resetGlyph(g, s, lx + textWidth(label, false), y + rh / 2, x, y, w, rh, interactive);
+
+        } else if (s instanceof Setting.Key k) {
+            // same chip as module binds: click to listen, then press a key or a middle/side mouse button
+            boolean listening = bindingKey == k;
+            String label = listening ? "PRESS A KEY" : k.bound() ? Keybinds.keyName(k.get()) : "NONE";
+            int bh = u(18), bw = Math.max(u(44), textWidth(label, false) + u(16)), bx = rx - bw, by = y + (rh - bh) / 2;
+            boolean chipHov = interactive && inside(mx, my, bx, by, bw, bh) && inside(mx, my, vx, vy, vw, vh);
+            float pulse = listening ? 0.55f + 0.45f * (float) Math.sin(ms / 140.0) : 0f;
+            round(g, bx, by, bw, bh, bh / 2, listening ? alpha(accent, (int) (0x30 + 0x40 * pulse)) : chipHov ? 0x28FFFFFF : 0x16FFFFFF);
+            outline(g, bx, by, bw, bh, bh / 2, Math.max(1, S / 2), listening ? alpha(accent, 0xE0) : 0x30FFFFFF, listening ? alpha(accent, 0x80) : 0x10FFFFFF);
+            textC(g, bx + bw / 2, by + bh / 2, label, listening ? accent : k.bound() ? (chipHov ? Theme.TEXT : Theme.SUBTEXT) : Theme.DIM, false);
+            icon(g, lx + u(5), y + rh / 2, Icons.KEYBOARD, Theme.DIM);
+            String name = fitText(k.name, Math.max(0, bx - u(28) - lx - u(16)), false);
+            text(g, lx + u(16), y + rh / 2, name, Theme.SUBTEXT, false);
+            if (chipHov) setTooltip(listening ? "Press a key or a middle/side mouse button. Esc cancels, Backspace clears."
+                    : "Click to change. Right-click clears.");
+            if (interactive) hit(x, y, w, rh, true, btn -> {
+                if (btn == 1) { k.set(Setting.Key.NONE); bindingKey = null; }
+                else bindingKey = keyBeforeClick == k ? null : k;
+            }, null);
+            resetGlyph(g, s, lx + u(16) + textWidth(name, false), y + rh / 2, x, y, w, rh, interactive);
 
         } else if (s instanceof Setting.Mode md) {
             List<String> options = md.options;
@@ -1512,6 +1540,15 @@ public class AnthraxScreen extends Screen {
         searchFocused = false;
         clickX = Math.round((float) event.x() * gs);
         // listening for a bind: middle and side mouse buttons bind (left/right stay for clicking)
+        if (bindingKey != null && event.button() >= 2) {
+            Setting.Key k = bindingKey;
+            bindingKey = null;
+            k.set(Keybinds.MOUSE_BASE + event.button());
+            Notifications.success(k.name, "Bound to " + Keybinds.keyName(k.get()));
+            return true;
+        }
+        keyBeforeClick = bindingKey;
+        bindingKey = null;
         if (binding != null && event.button() >= 2) {
             GuiModule module = binding;
             binding = null;
@@ -1567,6 +1604,20 @@ public class AnthraxScreen extends Screen {
     public boolean keyPressed(KeyEvent event) {
         swallowNextChar = false;
         int key = event.key();
+        if (bindingKey != null) {
+            Setting.Key k = bindingKey;
+            bindingKey = null;
+            if (key == GLFW.GLFW_KEY_ESCAPE) return true;
+            if (key == GLFW.GLFW_KEY_BACKSPACE || key == GLFW.GLFW_KEY_DELETE) {
+                k.set(Setting.Key.NONE);
+                Notifications.info(k.name, "Cleared");
+            } else {
+                k.set(key);
+                Notifications.success(k.name, "Bound to " + Keybinds.keyName(key));
+            }
+            swallowNextChar = true;
+            return true;
+        }
         if (tourPage >= 0) {
             if (key == GLFW.GLFW_KEY_ESCAPE) finishTour();
             else if (key == GLFW.GLFW_KEY_RIGHT || key == GLFW.GLFW_KEY_ENTER || key == GLFW.GLFW_KEY_SPACE) tourStep(1);

@@ -21,6 +21,10 @@ public final class Keybinds {
             if (module.isEnabled()) Notifications.success(module.name, "Enabled");
             else Notifications.info(module.name, "Disabled");
         }
+        // action binds set inside module settings (open a screen and the like); these work with the module off too
+        for (GuiModule module : ModuleRegistry.all())
+            for (Setting setting : module.settings())
+                if (setting instanceof Setting.Key bind && bind.bound() && bind.get() == key) bind.press();
     }
 
     /** Short, readable key label such as "R", "F4", "LSHIFT" or "MB4". */

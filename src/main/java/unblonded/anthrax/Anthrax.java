@@ -17,7 +17,6 @@ public class Anthrax implements ClientModInitializer {
     /** Opens (and, from inside the menu, closes) the Anthrax menu. Rebindable in Controls. */
     public static KeyMapping guiKey;
     /** Opens the Base Intel screen. */
-    public static KeyMapping intelKey;
     /** Hold to zoom. */
     public static KeyMapping zoomKey;
 
@@ -34,12 +33,6 @@ public class Anthrax implements ClientModInitializer {
                 KeyMapping.Category.MISC
         ));
 
-        intelKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
-                "key.anthrax.intel",
-                GLFW.GLFW_KEY_B,
-                KeyMapping.Category.MISC
-        ));
-
         zoomKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.anthrax.zoom",
                 GLFW.GLFW_KEY_C,
@@ -53,9 +46,6 @@ public class Anthrax implements ClientModInitializer {
             FeatureManager.tick(client);
             if (guiKey.consumeClick() && client.gui.screen() == null) {
                 client.gui.setScreen(new AnthraxScreen());
-            }
-            if (intelKey.consumeClick() && client.gui.screen() == null) {
-                client.gui.setScreen(new unblonded.anthrax.gui.IntelScreen());
             }
         });
     }

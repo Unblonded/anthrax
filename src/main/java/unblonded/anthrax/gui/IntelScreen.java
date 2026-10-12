@@ -9,7 +9,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import org.lwjgl.glfw.GLFW;
-import unblonded.anthrax.Anthrax;
 import unblonded.anthrax.modules.visual.FontSizeModule;
 import unblonded.anthrax.modules.world.BaseFinderModule;
 import unblonded.anthrax.modules.world.BaseFinderModule.Base;
@@ -514,7 +513,8 @@ public final class IntelScreen extends Screen {
             selected = 0;
             return true;
         }
-        if (Anthrax.intelKey != null && Anthrax.intelKey.matches(event)) { onClose(); return true; }
+        int bind = BaseFinderModule.INSTANCE.intelKey();
+        if (bind != unblonded.anthrax.modules.Setting.Key.NONE && event.key() == bind) { onClose(); return true; }
         return super.keyPressed(event);
     }
 }

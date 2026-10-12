@@ -323,6 +323,8 @@ public final class ChunkListScreen extends Screen {
     public boolean keyPressed(KeyEvent event) {
         int key = event.key();
         if (key == GLFW.GLFW_KEY_TAB) { tab = (tab + 1) % 4; scrollTarget = 0; return true; }
+        int bind = NewChunksModule.INSTANCE.listKey();
+        if (bind != unblonded.anthrax.modules.Setting.Key.NONE && key == bind) { onClose(); return true; }
         if (key == GLFW.GLFW_KEY_DOWN || key == GLFW.GLFW_KEY_UP) {
             List<Found> list = filtered();
             if (list.isEmpty()) return true;
