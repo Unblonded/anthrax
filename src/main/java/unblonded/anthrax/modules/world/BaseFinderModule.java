@@ -100,6 +100,10 @@ public final class BaseFinderModule extends FeatureModule {
         public int copperFresh, copperAged, copperWaxed;
         /** Estimated hours of player presence from the amethyst clock, -1 if no geode nearby. */
         public float amethystHours = -1;
+        /** Ores the world seed placed around the base that players have dug out (-1: no seed / not analysed). */
+        public int minedOres = -1;
+        /** Player-dug tunnel blocks around the base. */
+        public int tunnelBlocks;
         public int amethystFaces;
         // ---- raid aftermath
         public int crystals, craters, lavaFlows, lootDrops, debrisDrops, tntEntities, withers, workstations, portals;
@@ -140,6 +144,7 @@ public final class BaseFinderModule extends FeatureModule {
     private final Setting.Bool useFarms = setting(Setting.Bool.standalone("Detect farms", true));
     private final Setting.Bool useActivity = setting(Setting.Bool.standalone("Detect torches and paths", true));
     private final Setting.Bool useAmethyst = setting(Setting.Bool.standalone("Amethyst growth evidence", true));
+    private final Setting.Bool seedMining = setting(Setting.Bool.standalone("Mined-out ores from seed", true));
     // ---- display
     private final Setting.Bool beams = setting(Setting.Bool.standalone("Beacon beams", true));
     private final Setting.Bool outlines = setting(Setting.Bool.standalone("Area outlines", true));
@@ -152,6 +157,17 @@ public final class BaseFinderModule extends FeatureModule {
     private final Setting.Bool hudIntel = setting(Setting.Bool.standalone("Stat card over base", true));
     private final Setting.Mode cardSize = setting(Setting.Mode.standalone("Stat card size", "Small", "Small", "Medium", "Large"));
     private final Setting.Bool structures = setting(Setting.Bool.standalone("Show natural structures", true));
+    // ---- which kinds of finds to show (also silences their alerts)
+    private final Setting.Bool showStashes = setting(Setting.Bool.standalone("Show stashes", true));
+    private final Setting.Bool showBases = setting(Setting.Bool.standalone("Show bases", true));
+    private final Setting.Bool showStorage = setting(Setting.Bool.standalone("Show storage", true));
+    private final Setting.Bool showActivity = setting(Setting.Bool.standalone("Show activity hotspots", true));
+    private final Setting.Bool showMining = setting(Setting.Bool.standalone("Show mining sites", true));
+    private final Setting.Bool showFarms = setting(Setting.Bool.standalone("Show farms", true));
+    private final Setting.Bool showRedstone = setting(Setting.Bool.standalone("Show redstone builds", true));
+    private final Setting.Bool showPortals = setting(Setting.Bool.standalone("Show portals", true));
+    private final Setting.Bool showBuilds = setting(Setting.Bool.standalone("Show builds", true));
+    private final Setting.Bool showOther = setting(Setting.Bool.standalone("Show other player activity", true));
     // ---- alerts and log
     private final Setting.Bool notify = setting(Setting.Bool.standalone("Notify on find", true));
     private final Setting.Bool notifyKnown = setting(Setting.Bool.standalone("Notify known bases", false));
@@ -212,6 +228,12 @@ public final class BaseFinderModule extends FeatureModule {
     private String settingsKey = "";
     private Vec3 lastPos;
 
+    // ---- mined-out ore analysis (needs the world seed, from Seed-Ray's setting or singleplayer)
+    private final Set<Long> miningPending = new java.util.LinkedHashSet<>();
+    private final java.util.concurrent.atomic.AtomicBoolean miningBusy = new java.util.concurrent.atomic.AtomicBoolean();
+    private final java.util.concurrent.ConcurrentLinkedQueue<Object[]> miningResults = new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private long lastMining;
+
     private BaseFinderModule() {
         super("Base Finder", "Detect, classify and track player bases, stashes and farms in loaded chunks", "World", false);
         ClientChunkEvents.CHUNK_LOAD.register((lvl, chunk) -> {
@@ -239,6 +261,8 @@ public final class BaseFinderModule extends FeatureModule {
         bases = List.of();
         pois = List.of();
         scannedTotal = 0;
+        miningPending.clear();
+        miningResults.clear();
         lastPos = null;
         dirty = false;
     }
@@ -306,18 +330,78 @@ public final class BaseFinderModule extends FeatureModule {
         }
         for (Result r; (r = results.poll()) != null; ) if (r.generation() == generation) apply(r.key(), r.reports());
         if (now - lastEntityPass > 2000) { lastEntityPass = now; entityPass(); }
+        mining(client, now);
         if (now - lastRequeue > 90_000) { lastRequeue = now; rescanAll(); }
         // Re-cluster at most every 1.5 s; results are smoothed in stabilize().
         if (dirty && now - lastCluster > 1500) { lastCluster = now; dirty = false; cluster(client); }
     }
 
+    /**
+     * Mined-out ores: every half second, take the pending chunk nearest to you, copy a 7x7 chunk area,
+     * and simulate the ores of the inner chunks on the worker. Results come back to this thread.
+     */
+    private void mining(Minecraft mc, long now) {
+        for (Object[] r; (r = miningResults.poll()) != null; ) {
+            if ((long) r[0] != generation) continue;
+            @SuppressWarnings("unchecked")
+            Map<Long, unblonded.anthrax.modules.mining.MinedOreAnalysis.ChunkResult> res =
+                    (Map<Long, unblonded.anthrax.modules.mining.MinedOreAnalysis.ChunkResult>) r[1];
+            boolean antiXray = (boolean) r[2];
+            res.forEach((pos, cr) -> {
+                for (int layer = 0; layer < 2; layer++) {
+                    int predicted = cr.predicted()[layer];
+                    if (cr.tunnelBlocks()[layer] > 0) report(key(ChunkPos.getX(pos), ChunkPos.getZ(pos), layer)).tunnelBlocks = cr.tunnelBlocks()[layer];
+                    if (predicted < 8) continue;
+                    // trust it only if the world agrees with the seed (ores there or dug out), unless anti-xray hides ores
+                    float agree = (cr.present()[layer] + cr.mined()[layer]) / (float) predicted;
+                    if (!antiXray && agree < 0.8f) continue;
+                    ChunkReport rep = report(key(ChunkPos.getX(pos), ChunkPos.getZ(pos), layer));
+                    rep.minedOres = cr.mined()[layer];
+                    rep.seedOres = predicted;
+                }
+            });
+            dirty = true;
+        }
+        if (!seedMining.get() || miningPending.isEmpty() || now - lastMining < 500 || !miningBusy.compareAndSet(false, true)) return;
+        java.util.OptionalLong seed = unblonded.anthrax.modules.mining.SeedRayModule.activeSeed();
+        String path = level.dimension().identifier().getPath();
+        if (seed.isEmpty() || (!path.equals("overworld") && !path.equals("the_nether"))) { miningBusy.set(false); return; }
+        lastMining = now;
+        int pcx = mc.player.chunkPosition().x(), pcz = mc.player.chunkPosition().z();
+        long best = 0;
+        double bestD = Double.MAX_VALUE;
+        for (long k : miningPending) {
+            double d = Math.pow(ChunkPos.getX(k) - pcx, 2) + Math.pow(ChunkPos.getZ(k) - pcz, 2);
+            if (d < bestD) { bestD = d; best = k; }
+        }
+        int cx = ChunkPos.getX(best), cz = ChunkPos.getZ(best);
+        var job = unblonded.anthrax.modules.mining.MinedOreAnalysis.prepare(level, cx, cz, 3);
+        List<int[]> batch = new ArrayList<>();
+        for (int dx = -2; dx <= 2; dx++)
+            for (int dz = -2; dz <= 2; dz++) {
+                long k = ChunkPos.pack(cx + dx, cz + dz);
+                if (miningPending.contains(k) && job.canAnalyse(cx + dx, cz + dz)) { batch.add(new int[]{cx + dx, cz + dz}); miningPending.remove(k); }
+            }
+        if (batch.isEmpty()) { miningPending.remove(best); miningBusy.set(false); return; }
+        long gen = generation, s = seed.getAsLong();
+        WORKER.execute(() -> {
+            try { miningResults.add(new Object[]{gen, job.run(s, batch), unblonded.anthrax.modules.mining.MinedOreAnalysis.antiXraySeen()}); }
+            catch (RuntimeException e) { System.err.println("Anthrax Base Finder: mined-ore analysis failed: " + e); }
+            finally { miningBusy.set(false); }
+        });
+    }
+
     private void apply(long chunkKey, ChunkReport[] layers) {
+        if (seedMining.get() && layers.length > 0) miningPending.add(ChunkPos.pack(layers[0].chunkX, layers[0].chunkZ));
         for (ChunkReport report : layers) {
             long layerKey = key(report.chunkX, report.chunkZ, report.layer);
             ChunkReport previous = reports.get(layerKey);
             if (previous != null) {
                 System.arraycopy(previous.entityCounts, 0, report.entityCounts, 0, report.entityCounts.length);
                 report.entities = previous.entities;
+                report.minedOres = previous.minedOres;
+                report.seedOres = previous.seedOres;
+                report.tunnelBlocks = previous.tunnelBlocks;
             }
             if (report.empty()) reports.remove(layerKey);
             else reports.put(layerKey, report);
@@ -468,6 +552,21 @@ public final class BaseFinderModule extends FeatureModule {
                     feats[BaseScanner.AMETHYST_GROWTH.id] += a;
                 }
             }
+            // Ores the seed put here that are now air were dug out by players: strip and branch mines.
+            // Mining: dug corridors (2-3 high, 1-2 wide, flat, dead straight) plus ores the seed put there that
+            // are now air. Caves can mimic either a little, so it only counts where the 3x3 chunks around this
+            // one add up to a real mine: 150+ tunnel blocks and 4+ mined-out ores.
+            boolean carvedByStructure = nearby.contains(Structure.ANCIENT_CITY) || nearby.contains(Structure.TRAIL_RUINS)
+                    || nearby.contains(Structure.MINESHAFT) || nearby.contains(Structure.STRONGHOLD) || nearby.contains(Structure.TRIAL_CHAMBER);
+            if (seedMining.get() && !carvedByStructure && (r.tunnelBlocks >= 8 || r.minedOres > 0)) {
+                int[] mine = mineAround(r);
+                if (mine[0] >= 150 && mine[1] >= 4) {
+                    float m = Math.min(150f, r.tunnelBlocks * 0.6f + Math.max(0, r.minedOres) * 8f);
+                    score += m;
+                    cats[Category.ACTIVITY.ordinal()] += m;
+                    feats[BaseScanner.MINED_ORE.id] += m;
+                }
+            }
             // Raid aftermath is evidence too: a base bombed down to the dirt still marks where players lived.
             // (Craters only lower the unraided score of a base found by other evidence; terrain can mimic them.)
             float raid = Math.min(40f, r.entities.lootDrops * 8f) + (r.entities.debrisDrops >= 12 ? 15f : 0);
@@ -523,7 +622,7 @@ public final class BaseFinderModule extends FeatureModule {
                 base.firstSeen = now;
                 base.known = BaseLog.isKnown(base.x, base.z);
             }
-            if (!base.announced && base.layer == playerLayer()) {
+            if (!base.announced && base.layer == playerLayer() && shows(base.type)) {
                 base.announced = true;
                 if (log.get() && !base.known) BaseLog.append(level, base);
                 if (notify.get() && (!base.known || notifyKnown.get()) && client.player != null) {
@@ -543,6 +642,19 @@ public final class BaseFinderModule extends FeatureModule {
     }
 
     private long nextId;
+
+    /** Tunnel blocks and mined-out ores summed over the 3x3 chunks around a report (same layer). */
+    private int[] mineAround(ChunkReport r) {
+        int vol = 0, mined = 0;
+        for (int dx = -1; dx <= 1; dx++)
+            for (int dz = -1; dz <= 1; dz++) {
+                ChunkReport n = reports.get(key(r.chunkX + dx, r.chunkZ + dz, r.layer));
+                if (n == null) continue;
+                vol += n.tunnelBlocks;
+                mined += Math.max(0, n.minedOres);
+            }
+        return new int[]{vol, mined};
+    }
 
     /**
      * Re-clustering runs every couple of seconds and raw evidence jitters (items despawn, furnaces go
@@ -593,7 +705,7 @@ public final class BaseFinderModule extends FeatureModule {
             for (int i = 0; i < cats.length; i++) cats[i] += s.cats[i];
             for (int i = 0; i < feats.length; i++) {
                 feats[i] += s.feats[i];
-                if (s.feats[i] > 0) featCounts[i] += r.count(BaseScanner.FEATURES.get(i));
+                if (s.feats[i] > 0) featCounts[i] += i == BaseScanner.MINED_ORE.id ? Math.max(0, r.minedOres) : r.count(BaseScanner.FEATURES.get(i));
             }
             b.minChunkX = Math.min(b.minChunkX, r.chunkX); b.maxChunkX = Math.max(b.maxChunkX, r.chunkX);
             b.minChunkZ = Math.min(b.minChunkZ, r.chunkZ); b.maxChunkZ = Math.max(b.maxChunkZ, r.chunkZ);
@@ -614,7 +726,7 @@ public final class BaseFinderModule extends FeatureModule {
         b.y = yCount > 0 ? ySum / yCount : (b.layer == BaseScanner.DEEP ? -32 : 64);
         if (b.minY == Integer.MAX_VALUE) { b.minY = b.y - 4; b.maxY = b.y + 4; }
         b.confidence = (int) Math.round(100 * (1 - Math.exp(-total / 250.0)));
-        b.type = classify(cats, total, featCounts, feats[BaseScanner.AMETHYST_GROWTH.id]);
+        b.type = classify(cats, total, featCounts, feats[BaseScanner.AMETHYST_GROWTH.id], feats[BaseScanner.MINED_ORE.id]);
         b.color = typeColor(b.type);
         b.summary = summarize(feats, featCounts);
         b.categories = cats;
@@ -693,6 +805,20 @@ public final class BaseFinderModule extends FeatureModule {
                 + b.shulkers * 27 + b.hoppers * 5 + b.dispensers * 9 + b.crafters * 9;
         for (Structure st : nearby) b.nearbyStructures.add(pretty(st));
         if (faces >= 6) { b.amethystFaces = faces; b.amethystHours = AmethystClock.hours(faces, stageSum, budding); }
+        int mined = -1;
+        for (int cx = b.minChunkX - 1; cx <= b.maxChunkX + 1; cx++)
+            for (int cz = b.minChunkZ - 1; cz <= b.maxChunkZ + 1; cz++) {
+                ChunkReport r = reports.get(key(cx, cz, b.layer));
+                if (r != null && r.minedOres >= 0) mined = Math.max(0, mined) + r.minedOres;
+            }
+        int tunnelVol = 0;
+        for (int cx = b.minChunkX - 1; cx <= b.maxChunkX + 1; cx++)
+            for (int cz = b.minChunkZ - 1; cz <= b.maxChunkZ + 1; cz++) {
+                ChunkReport r = reports.get(key(cx, cz, b.layer));
+                if (r != null) tunnelVol += r.tunnelBlocks;
+            }
+        b.minedOres = mined;
+        b.tunnelBlocks = tunnelVol;
         if (!nearby.isEmpty()) b.notes.add("Overlaps a natural " + String.join(", ", b.nearbyStructures).toLowerCase()
                 + "; its own blocks are ignored");
 
@@ -776,6 +902,10 @@ public final class BaseFinderModule extends FeatureModule {
             else if (b.amethystHours >= 1) { score += Math.round(b.amethystHours * 3); why.add(String.format("Amethyst grown: about %.1fh of player presence", b.amethystHours)); }
             else why.add(String.format("Amethyst barely grown: about %.1fh of player presence", b.amethystHours));
             if (b.amethystHours < 0.4f) score -= 5;
+        }
+        if (b.minedOres >= 4 && b.tunnelBlocks >= 150) {
+            score += Math.min(15, b.minedOres / 4f);
+            why.add(b.minedOres + " ores mined out and " + b.tunnelBlocks + " blocks of dug tunnel (checked against the world seed)");
         }
         if (b.copperAged > b.copperFresh && b.copperAged >= 8) { score -= 10; why.add("Copper has weathered (base is old)"); }
         else if (b.copperFresh >= 8 && b.copperWaxed < b.copperFresh) { score += 5; why.add("Fresh unwaxed copper (recent build)"); }
@@ -907,13 +1037,14 @@ public final class BaseFinderModule extends FeatureModule {
     public boolean showPinnedCards() { return isEnabled() && labels.get(); }
     public String cardSize() { return cardSize.get(); }
 
-    private static String classify(float[] c, float total, int[] counts, float amethyst) {
+    private static String classify(float[] c, float total, int[] counts, float amethyst, float mining) {
         float storage = c[Category.STORAGE.ordinal()] / total, valuable = c[Category.VALUABLE.ordinal()] / total;
         float redstone = c[Category.REDSTONE.ordinal()] / total, portal = c[Category.PORTAL.ordinal()] / total;
         float build = c[Category.BUILD.ordinal()] / total, farm = c[Category.FARM.ordinal()] / total;
         int shulkers = counts[0];
         if (shulkers >= 8 || (storage > 0.6f && total >= 200)) return "Stash";
         if (amethyst / total > 0.5f) return "Activity hotspot";
+        if (mining / total > 0.5f) return "Mining site";
         int strong = 0;
         for (float v : c) if (v / total > 0.12f) strong++;
         if (strong >= 3 || valuable > 0.4f) return "Base";
@@ -935,6 +1066,7 @@ public final class BaseFinderModule extends FeatureModule {
             case "Build" -> 0xFF7CC8FF;
             case "Storage" -> 0xFFFFD27A;
             case "Activity hotspot" -> 0xFFC58BFF;
+            case "Mining site" -> 0xFF8FA3B8;
             default -> 0xFFFFE08A;
         };
     }
@@ -950,6 +1082,7 @@ public final class BaseFinderModule extends FeatureModule {
             int n = counts[f.id];
             if (sb.length() > 0) sb.append(", ");
             if (f == BaseScanner.AMETHYST_GROWTH) { sb.append("player-grown amethyst"); continue; }
+            if (f == BaseScanner.MINED_ORE) { sb.append(n > 0 ? n + " ores mined out" : "dug tunnels"); continue; }
             sb.append(n).append(' ').append(n == 1 ? f.name : f.plural);
         }
         return sb.toString();
@@ -978,18 +1111,41 @@ public final class BaseFinderModule extends FeatureModule {
 
     // ------------------------------------------------------------------ public views
     /** Bases in the layer the player is in (deepslate below y=0, surface above). */
+    /** Whether finds of this type are shown (the type filter checkboxes). */
+    public boolean shows(String type) {
+        return switch (type) {
+            case "Stash" -> showStashes.get();
+            case "Base" -> showBases.get();
+            case "Storage" -> showStorage.get();
+            case "Activity hotspot" -> showActivity.get();
+            case "Mining site" -> showMining.get();
+            case "Farm" -> showFarms.get();
+            case "Redstone build" -> showRedstone.get();
+            case "Portal" -> showPortals.get();
+            case "Build" -> showBuilds.get();
+            default -> showOther.get();
+        };
+    }
+
+    private String filterKey() {
+        return "" + showStashes.get() + showBases.get() + showStorage.get() + showActivity.get() + showMining.get()
+                + showFarms.get() + showRedstone.get() + showPortals.get() + showBuilds.get() + showOther.get();
+    }
+
+    /** Bases on your layer that pass the type filter, best first. */
     public List<Base> bases() {
         List<Base> all = bases;
         int layer = playerLayer();
+        String filter = filterKey();
         Object[] cached = layerView.get();
-        if (cached != null && cached[0] == all && (int) cached[1] == layer) {
+        if (cached != null && cached[0] == all && (int) cached[1] == layer && filter.equals(cached[3])) {
             @SuppressWarnings("unchecked") List<Base> v = (List<Base>) cached[2];
             return v;
         }
         List<Base> view = new ArrayList<>();
-        for (Base b : all) if (b.layer == layer) view.add(b);
+        for (Base b : all) if (b.layer == layer && shows(b.type)) view.add(b);
         view = List.copyOf(view);
-        layerView.set(new Object[]{all, layer, view});
+        layerView.set(new Object[]{all, layer, view, filter});
         return view;
     }
 

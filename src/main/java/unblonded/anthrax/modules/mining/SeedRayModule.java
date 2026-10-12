@@ -85,6 +85,9 @@ public final class SeedRayModule extends FeatureModule {
         catch (NumberFormatException e) { return OptionalLong.of(s.hashCode()); }
     }
 
+    /** The seed Seed-Ray would use (typed in its settings, or the singleplayer world's), whether or not it is on. */
+    public static OptionalLong activeSeed() { return INSTANCE.seed(Minecraft.getInstance()); }
+
     private OptionalLong seed(Minecraft mc) {
         OptionalLong typed = parseSeed(worldSeed.get());
         if (typed.isPresent()) return typed;

@@ -94,7 +94,7 @@ final class BaseScanner {
     private static boolean built;
 
     // entity-sourced features (filled by the entity pass, not by block palettes)
-    static Feature ITEM_FRAME, ARMOR_STAND, PAINTING, END_CRYSTAL, VILLAGER_HALL, ANIMAL_PEN, AMETHYST_GROWTH;
+    static Feature ITEM_FRAME, ARMOR_STAND, PAINTING, END_CRYSTAL, VILLAGER_HALL, ANIMAL_PEN, AMETHYST_GROWTH, MINED_ORE;
 
     private enum Marker { BELL, COBWEB, RAIL, END_PORTAL_FRAME, INFESTED_BRICKS, SPAWNER, MOSSY_COBBLE, REINFORCED_DEEPSLATE,
         DEEP_BRICKS, TRIAL_SPAWNER, VAULT, GILDED_BLACKSTONE, NETHER_BRICK_FENCE, NETHER_BRICKS, PURPUR, PRISMARINE,
@@ -201,6 +201,8 @@ final class BaseScanner {
         ANIMAL_PEN = feature("penned animal", "penned animals", Category.FARM, 0.6f, 80, false, none, never);
         // Scored directly from the amethyst clock, not from block counts (see BaseFinderModule.cluster).
         AMETHYST_GROWTH = feature("player-grown geode", "player-grown geodes", Category.ACTIVITY, 0, 0, false, none, never);
+        // Scored from the seed: ores that generated here and are now air (see MinedOreAnalysis).
+        MINED_ORE = feature("mined-out ore", "mined-out ores", Category.ACTIVITY, 0, 0, false, none, never);
 
         for (Block block : BuiltInRegistries.BLOCK) {
             String id = BuiltInRegistries.BLOCK.getKey(block).getPath();
@@ -374,6 +376,10 @@ final class BaseScanner {
         final Set<String> heads = new LinkedHashSet<>();
         /** Amethyst clock: open or budded faces around budding amethyst, and their summed growth stage. */
         int amethystFaces, amethystStageSum, amethystBudding;
+        /** Ores the world seed puts in this chunk layer that players have dug out; -1 until analysed. */
+        int minedOres = -1, seedOres;
+        /** Player-dug tunnel air blocks in this chunk layer (straight, flat, narrow passages). */
+        int tunnelBlocks;
         EntityIntel entities = EntityIntel.EMPTY;
         int keyYSum, keyYCount;
         long scannedAt;
@@ -388,7 +394,7 @@ final class BaseScanner {
             for (int i = 0; i < blockCounts.length; i++) if (blockCounts[i] != 0 || entityCounts[i] != 0) return false;
             // Chunks that only carry structure markers or amethyst still matter (suppression, the amethyst clock).
             return structures.isEmpty() && amethystFaces == 0 && entities == EntityIntel.EMPTY
-                    && sig(Signal.CRATER) == 0 && sig(Signal.LAVA_FLOW) == 0;
+                    && sig(Signal.CRATER) == 0 && sig(Signal.LAVA_FLOW) == 0 && minedOres <= 0 && tunnelBlocks == 0;
         }
     }
 

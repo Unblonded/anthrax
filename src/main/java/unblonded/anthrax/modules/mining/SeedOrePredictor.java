@@ -77,12 +77,16 @@ final class SeedOrePredictor {
                          Map<ResourceKey<Biome>, Holder<Biome>> biomes) {}
 
     private static final Map<String, Setup> SETUPS = new HashMap<>();
-    private static long veinSeed;
-    private static OreVeinSim veinSim;
+    /** One vein simulator per thread (its noise-corner cache is not thread-safe); rebuilt when the seed changes. */
+    private static final ThreadLocal<Object[]> VEIN_SIM = new ThreadLocal<>();
 
-    private static synchronized OreVeinSim veins(long seed) {
-        if (veinSim == null || veinSeed != seed) { veinSim = new OreVeinSim(REGISTRIES, seed); veinSeed = seed; }
-        return veinSim;
+    private static OreVeinSim veins(long seed) {
+        Object[] cached = VEIN_SIM.get();
+        if (cached == null || (long) cached[0] != seed) {
+            cached = new Object[]{seed, new OreVeinSim(REGISTRIES, seed)};
+            VEIN_SIM.set(cached);
+        }
+        return (OreVeinSim) cached[1];
     }
 
     private SeedOrePredictor() {}
@@ -196,8 +200,18 @@ final class SeedOrePredictor {
      * passes re-simulate with the earlier neighbours' ores in place.
      */
     static List<Hit> predict(Snapshot snap, long seed, List<int[]> chunks) {
+        return predict(snap, seed, chunks, false);
+    }
+
+    /**
+     * @param restoreTunnels treat player-dug tunnels as the rock they were dug from, so ores that were
+     *                       mined out are predicted too (used to find mined-out ores)
+     */
+    static List<Hit> predict(Snapshot snap, long seed, List<int[]> chunks, boolean restoreTunnels) {
         Setup setup = setup(snap.nether);
         Run run = new Run(snap, setup, snap.nether ? null : veins(seed), seed);
+        run.restoreTunnels = restoreTunnels;
+        run.tunnels = new Tunnels(snap);
         List<int[]> todo = new ArrayList<>();
         for (int[] c : chunks) if (snap.hasArea(c[0], c[1])) todo.add(c);
 
@@ -374,6 +388,79 @@ final class SeedOrePredictor {
         return LATER_ON_TOP.contains(s.getBlock());
     }
 
+    /**
+     * Player-dug tunnel air: a 2-3 high, 1-2 wide passage with a flat floor and ceiling and constant width
+     * that runs straight for at least 6 blocks. Natural caves are irregular, ravines are tall, and mineshaft /
+     * stronghold corridors are 3 wide, so they do not match.
+     */
+    static final class Tunnels {
+        private final Snapshot snap;
+        private final it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap tunnelCache = new it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap();
+
+        Tunnels(Snapshot snap) { this.snap = snap; }
+
+        boolean at(int x, int y, int z) {
+            long key = BlockPos.asLong(x, y, z);
+            if (tunnelCache.containsKey(key)) return tunnelCache.get(key);
+            boolean result = tunnelTest(x, y, z);
+            tunnelCache.put(key, result);
+            return result;
+        }
+
+        /** Walkable space: air, or things you walk through (rails, torches, plants), so rails do not split a corridor. */
+        private boolean air(int x, int y, int z) {
+            BlockState s = snap.get(x, y, z);
+            return s.isAir() || (!s.blocksMotion() && s.getFluidState().isEmpty());
+        }
+
+        private boolean solid(int x, int y, int z) {
+            BlockState s = snap.get(x, y, z);
+            return s.blocksMotion() && s.getFluidState().isEmpty();
+        }
+
+        /** Floor y of the air column at (x, z) containing y, or MIN_VALUE if it is not 1-3 high between solid blocks. */
+        private int profile(int x, int y, int z, int[] height) {
+            if (!air(x, y, z)) return Integer.MIN_VALUE;
+            // 2+ wide passages must not be mistaken for the walls of a wider room: handled by width()
+            int down = 0, up = 0;
+            while (down < 3 && air(x, y - down - 1, z)) down++;
+            while (up < 3 && air(x, y + up + 1, z)) up++;
+            int floor = y - down - 1, h = down + up + 1;
+            if (h > 3 || !solid(x, floor, z) || !solid(x, floor + h + 1, z)) return Integer.MIN_VALUE;
+            height[0] = h;
+            return floor;
+        }
+
+        /** Air width across the passage at (x, y, z), perpendicular to the axis (a, b); 3 means wider than 2. */
+        private int width(int x, int y, int z, int[] axis) {
+            int px = axis[1], pz = axis[0], w = 1;
+            for (int dir = -1; dir <= 1; dir += 2)
+                for (int i = 1; i <= 2 && air(x + px * i * dir, y, z + pz * i * dir); i++) w++;
+            return Math.min(w, 3);
+        }
+
+        private boolean tunnelTest(int x, int y, int z) {
+            int[] h0 = new int[1], h = new int[1];
+            int floor = profile(x, y, z, h0);
+            if (floor == Integer.MIN_VALUE || h0[0] < 2) return false;   // players dig 2-3 high to walk
+            int[][] axes = {{1, 0}, {0, 1}};
+            for (int[] a : axes) {
+                int w0 = width(x, floor + 1, z, a);
+                if (w0 > 2) continue;
+                int run = 1;
+                for (int dir = -1; dir <= 1; dir += 2)
+                    for (int i = 1; i <= 8; i++) {
+                        int nx = x + a[0] * i * dir, nz = z + a[1] * i * dir;
+                        // same floor, same height and same width all along: a dug corridor, not a cave
+                        if (profile(nx, floor + 1, nz, h) != floor || h[0] != h0[0] || width(nx, floor + 1, nz, a) != w0) break;
+                        run++;
+                    }
+                if (run >= 6) return true;
+            }
+            return false;
+        }
+    }
+
     /** One prediction: the snapshot plus everything derived from the seed. */
     private static final class Run {
         final Snapshot snap;
@@ -385,7 +472,8 @@ final class SeedOrePredictor {
         final Map<Long, Integer> floor = new HashMap<>();
         Long2ObjectOpenHashMap<BlockState> placed;
         List<Long2ObjectOpenHashMap<BlockState>> neighbours;
-        boolean antiXray;
+        boolean antiXray, restoreTunnels;
+        Tunnels tunnels;
 
         Run(Snapshot snap, Setup setup, OreVeinSim veins, long seed) {
             this.snap = snap;
@@ -445,6 +533,7 @@ final class SeedOrePredictor {
                 if (s != null) return s;
             }
             BlockState now = snap.get(x, y, z);
+            if (restoreTunnels && now.isAir() && tunnels.at(x, y, z)) return plainRock(x, y, z);
             // anti-xray only fakes blocks you cannot see, i.e. blocks not touching air
             // (and hides ores, raw ore blocks and deepslate variants behind plain stone, so that is rebuilt too)
             if (antiXray && (FAKEABLE.contains(now.getBlock()) || setup.productBase.containsKey(now.getBlock()) || PLAIN.contains(now.getBlock()))
