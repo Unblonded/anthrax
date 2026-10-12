@@ -63,9 +63,17 @@ public final class ModuleRegistry {
         addFeature(new AutoAnchorModule());
         addFeature(new SelfCrystalModule());
         addFeature(new unblonded.anthrax.modules.combat.AutoArmorModule());
+        addFeature(unblonded.anthrax.modules.combat.KillAuraModule.INSTANCE);
+        addFeature(new unblonded.anthrax.modules.combat.TriggerBotModule());
+        addFeature(unblonded.anthrax.modules.combat.AutoWeaponModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.combat.VelocityModule.INSTANCE);
+        addFeature(new unblonded.anthrax.modules.combat.AutoEatModule());
+        addFeature(new unblonded.anthrax.modules.combat.SurroundModule());
+        addFeature(unblonded.anthrax.modules.combat.TargetHudModule.INSTANCE);
         addFeature(new TotemNotifierModule());
         addFeature(AirUnderCheckModule.INSTANCE);
         addFeature(SeedRayModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.world.AmethystEspModule.INSTANCE);
         addFeature(unblonded.anthrax.modules.world.BaseFinderModule.INSTANCE);
         addFeature(unblonded.anthrax.modules.world.WaypointsModule.INSTANCE);
         addFeature(BlockEspModule.INSTANCE);

@@ -393,12 +393,11 @@ public class AnthraxScreen extends Screen {
     private void drawHeader(GuiGraphicsExtractor g, int ix, int iw, int wy, int headerH, int accent, int accent2, long ms) {
         int cy = wy + headerH / 2;
 
-        // app mark: a glossy accent bead
+        // app mark: the Anthrax logo
         int mark = u(28);
         int mx0 = ix + u(16), my0 = cy - mark / 2;
         if (FANCY) glow(g, mx0 + mark / 2, cy, u(24), accent, 3, 10 + (int) (6 * Math.sin(ms / 600.0)));
-        bead(g, mx0, my0, mark, accent);
-        textC(g, mx0 + mark / 2, cy + S / 2, "A", 0xFFFFFFFF, true);
+        logo(g, mx0, my0, mark, accent, Theme.accent2());
 
         int tx = mx0 + mark + u(10);
         if (Theme.idx == 0) textRainbow(g, tx, cy - u(6), "Anthrax", Theme.hue, 22f, true);
@@ -882,7 +881,7 @@ public class AnthraxScreen extends Screen {
         // keybind chip: always shown when bound or listening, otherwise only on hover
         boolean listening = binding == m;
         int bh = u(18), by = y + (hdr - bh) / 2;
-        String bindLabel = listening ? "PRESS A KEY" : m.hasKey() ? Keybinds.keyName(m.key()) : "BIND";
+        String bindLabel = listening ? "PRESS A KEY OR MOUSE" : m.hasKey() ? Keybinds.keyName(m.key()) : "BIND";
         int bw = Math.max(u(34), textWidth(bindLabel, false) + u(16));
         int bx = (moduleSettings.isEmpty() ? sx - u(10) : sx - u(40)) - bw;
         boolean bindHov = inside(mx, my, bx, by, bw, bh) && inside(mx, my, vx, vy, vw, vh);
@@ -905,7 +904,7 @@ public class AnthraxScreen extends Screen {
         if (hov) {
             if (hoverModule != m) { hoverModule = m; hoverSince = System.currentTimeMillis(); }
             boolean settled = System.currentTimeMillis() - hoverSince > 450;
-            if (bindHov && showBind) setTooltip(listening ? "Press a key. Esc cancels, Backspace unbinds." : "Click to set a toggle key");
+            if (bindHov && showBind) setTooltip(listening ? "Press a key or a mouse button (middle/side). Esc cancels, Backspace unbinds." : "Click to set a toggle key");
             else if (settled && !showDescription) setTooltip(m.description);
         } else if (hoverModule == m) {
             hoverModule = null;
@@ -1243,6 +1242,14 @@ public class AnthraxScreen extends Screen {
         focusedText = null;
         selectAllText = false;
         searchFocused = false;
+        // listening for a bind: middle and side mouse buttons bind (left/right stay for clicking)
+        if (binding != null && event.button() >= 2) {
+            GuiModule module = binding;
+            binding = null;
+            module.setKey(Keybinds.MOUSE_BASE + event.button());
+            Notifications.success(module.name, "Bound to " + Keybinds.keyName(module.key()));
+            return true;
+        }
         bindingBeforeClick = binding;
         binding = null;
         int px = Math.round((float) event.x() * gs / uiOverride), py = Math.round((float) event.y() * gs / uiOverride);
@@ -1451,6 +1458,13 @@ public class AnthraxScreen extends Screen {
             case "Auto Totem", "Totem Notifier" -> new ItemStack(Items.TOTEM_OF_UNDYING);
             case "Auto Anchor" -> new ItemStack(Items.RESPAWN_ANCHOR);
             case "Aim Assist" -> new ItemStack(Items.TARGET);
+            case "Kill Aura" -> new ItemStack(Items.NETHERITE_SWORD);
+            case "Trigger Bot" -> new ItemStack(Items.TRIPWIRE_HOOK);
+            case "Auto Weapon" -> new ItemStack(Items.DIAMOND_AXE);
+            case "Velocity" -> new ItemStack(Items.SLIME_BALL);
+            case "Auto Eat" -> new ItemStack(Items.GOLDEN_APPLE);
+            case "Surround" -> new ItemStack(Items.OBSIDIAN);
+            case "Target HUD" -> new ItemStack(Items.PLAYER_HEAD);
             case "Render Method" -> new ItemStack(Items.SPYGLASS);
             case "Player Dig Safety" -> new ItemStack(Items.IRON_PICKAXE);
             case "Time Changer", "FPS Chart" -> new ItemStack(Items.CLOCK);
@@ -1460,6 +1474,7 @@ public class AnthraxScreen extends Screen {
             case "Seed-Ray" -> new ItemStack(Items.DIAMOND_ORE);
             case "Base Finder" -> new ItemStack(Items.RECOVERY_COMPASS);
             case "Waypoints" -> new ItemStack(Items.LODESTONE);
+            case "Amethyst ESP" -> new ItemStack(Items.AMETHYST_CLUSTER);
             case "Auto Armor" -> new ItemStack(Items.NETHERITE_CHESTPLATE);
             case "Nametags" -> new ItemStack(Items.NAME_TAG);
             case "Tracers" -> new ItemStack(Items.LEAD);

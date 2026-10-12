@@ -8,6 +8,11 @@ import unblonded.anthrax.gui.Notifications;
 public final class Keybinds {
     private Keybinds() {}
 
+    /** Mouse buttons share the key space: MOUSE_BASE + GLFW button (2 = middle, 3/4 = side buttons). */
+    public static final int MOUSE_BASE = 1000;
+
+    public static boolean isMouse(int key) { return key >= MOUSE_BASE && key < MOUSE_BASE + 16; }
+
     public static void onKeyPress(int key) {
         if (key == GLFW.GLFW_KEY_UNKNOWN) return;
         for (GuiModule module : ModuleRegistry.all()) {
@@ -21,6 +26,12 @@ public final class Keybinds {
     /** Short, readable key label such as "R", "F4", "LSHIFT" or "MB4". */
     public static String keyName(int key) {
         if (key == GuiModule.NO_KEY) return "NONE";
+        if (isMouse(key)) return switch (key - MOUSE_BASE) {
+            case 2 -> "MIDDLE";
+            case 3 -> "MB4";
+            case 4 -> "MB5";
+            default -> "MB" + (key - MOUSE_BASE + 1);
+        };
         String glfw = GLFW.glfwGetKeyName(key, 0);
         if (glfw != null && !glfw.isBlank()) return glfw.toUpperCase(java.util.Locale.ROOT);
         String name = InputConstants.Type.KEYSYM.getOrCreate(key).getName();

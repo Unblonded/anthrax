@@ -85,6 +85,7 @@ public final class Hud {
                 nametags(g, mc, pw, ph, accent);
                 waypointLabels(g, mc, pw, ph);
                 pinnedCards(g, mc, pw, ph, accent);
+                if (unblonded.anthrax.modules.combat.TargetHudModule.INSTANCE.isEnabled()) targetHud(g, mc, pw, ph, dt, accent);
             }
             int rightY = margin;
             if (HudModule.INSTANCE.moduleList()) rightY = moduleList(g, pw, margin, dt, accent, accent2) + u(6);
@@ -102,6 +103,77 @@ public final class Hud {
         }
     }
 
+    // ------------------------------------------------------------------ target HUD
+    private static LivingEntity hudTarget;
+    private static float hudHealth = -1, hudFade;
+
+    private static void targetHud(GuiGraphicsExtractor g, Minecraft mc, int pw, int ph, float dt, int accent) {
+        var module = unblonded.anthrax.modules.combat.TargetHudModule.INSTANCE;
+        LivingEntity t = unblonded.anthrax.modules.combat.CombatUtil.target();
+        if (t != null && !(t instanceof Player) && !module.showMobs()) t = null;
+        if (t != null && t != hudTarget) { hudTarget = t; hudHealth = -1; }
+        hudFade += ((t != null ? 1 : 0) - hudFade) * Math.min(1, dt * 12);
+        if (hudFade < 0.02f || hudTarget == null) { if (t == null) hudTarget = null; return; }
+        LivingEntity e = hudTarget;
+        float max = Math.max(1, e.getMaxHealth()), hp = e.getHealth() + e.getAbsorptionAmount();
+        if (hudHealth < 0) hudHealth = hp;
+        hudHealth += (hp - hudHealth) * Math.min(1, dt * 10);
+
+        int w = u(150), h = u(module.showArmor() ? 58 : 44);
+        int x = pw / 2 + u(18), y = ph / 2 + u(14) + Math.round((1 - hudFade) * u(8));
+        int a = Math.round(hudFade * 255);
+        shadow(g, x, y, w, h, u(12), u(8), Math.round(0x50 * hudFade));
+        glass(g, x, y, w, h, u(12), alpha(0x0E1119, Math.round(0xD0 * hudFade)), 0.9f * hudFade);
+
+        int face = u(28), fx = x + u(8), fy = y + u(8);
+        if (e instanceof net.minecraft.client.player.AbstractClientPlayer p) {
+            net.minecraft.client.gui.components.PlayerFaceExtractor.extractRenderState(g, p.getSkin(), fx, fy, face, (a << 24) | 0xFFFFFF);
+        } else {
+            round(g, fx, fy, face, face, u(6), alpha(accent, Math.round(0x50 * hudFade)));
+            textC(g, fx + face / 2, fy + face / 2, e.getName().getString().substring(0, 1).toUpperCase(), alpha(0xFFFFFF, a), true);
+        }
+        int tx = fx + face + u(8), right = x + w - u(8);
+        text(g, tx, fy + u(6), fit(e.getName().getString(), right - tx - u(30), true), alpha(Theme.TEXT, a), true);
+        String dist = Math.round(Math.sqrt(mc.player.distanceToSqr(e)) * 10) / 10.0 + "m";
+        text(g, right - textWidth(dist, false), fy + u(6), dist, alpha(Theme.MUTED, a), false);
+
+        // status line: pops, and whether we are winning the trade
+        float mine = mc.player.getHealth() + mc.player.getAbsorptionAmount();
+        String status = mine > hp + 2 ? "Winning" : mine < hp - 2 ? "Losing" : "Even";
+        int statusCol = mine > hp + 2 ? Theme.OK : mine < hp - 2 ? Theme.DANGER : 0xFFFFC94A;
+        String pops = e instanceof Player p ? TotemPops.pops(p) + " pops   " : "";
+        text(g, tx, fy + u(19), pops + status, alpha(pops.isEmpty() ? statusCol : Theme.SUBTEXT, a), false);
+        if (!pops.isEmpty()) text(g, tx + textWidth(pops, false), fy + u(19), status, alpha(statusCol, a), false);
+
+        // health bar: smooth fill, red to green, absorption shown in gold past the max
+        int by = y + u(42), bw = w - u(16), bh = u(5);
+        round(g, fx, by, bw, bh, bh / 2, alpha(0xFFFFFF, Math.round(0x18 * hudFade)));
+        float frac = Math.min(1, hudHealth / max);
+        int fill = Math.max(bh, Math.round(bw * frac));
+        round(g, fx, by, fill, bh, bh / 2, alpha(lerp(Theme.DANGER, Theme.OK, frac), a));
+        if (hudHealth > max) {
+            int gold = Math.round(bw * Math.min(1, (hudHealth - max) / max));
+            round(g, fx, by, Math.max(bh, gold), bh, bh / 2, alpha(0xFFFFC94A, Math.round(0xC0 * hudFade)));
+        }
+        String hpText = String.format("%.1f", hp / 2f) + " ❤";
+        text(g, right - textWidth(hpText, false), by - u(7), hpText, alpha(Theme.SUBTEXT, a), false);
+
+        if (module.showArmor() && hudFade > 0.6f) {
+            int ix = fx, iy = y + h - u(13), icon = u(10);
+            EquipmentSlot[] slots = {EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET, EquipmentSlot.MAINHAND, EquipmentSlot.OFFHAND};
+            for (EquipmentSlot s : slots) {
+                ItemStack st = e.getItemBySlot(s);
+                if (st.isEmpty()) continue;
+                g.pose().pushMatrix();
+                g.pose().translate(ix, iy);
+                g.pose().scale(icon / 16f, icon / 16f);
+                g.item(st, 0, 0);
+                g.pose().popMatrix();
+                ix += icon + u(4);
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ watermark
     private static int watermark(GuiGraphicsExtractor g, Minecraft mc, int x, int y, int accent, int accent2) {
         long now = System.currentTimeMillis();
@@ -113,8 +185,7 @@ public final class Hud {
         shadow(g, x, y, w, h, h / 2, u(6), 0x40);
         glass(g, x, y, w, h, h / 2, alpha(0x0E1119, 0xC8), 0.9f);
         int cy = y + h / 2;
-        bead(g, x + u(4), cy - tile / 2, tile, accent);
-        textC(g, x + u(4) + tile / 2, cy, "A", Theme.BG, true);
+        logo(g, x + u(4), cy - tile / 2, tile, accent, Theme.accent2());
         int tx = x + u(4) + tile + u(7);
         if (Theme.idx == 0) textRainbow(g, tx, cy, "Anthrax", Theme.hue, 22f, true);
         else text(g, tx, cy, "Anthrax", Theme.TEXT, true);
@@ -149,27 +220,32 @@ public final class Hud {
         }
         ROWS.sort((a, b) -> Integer.compare(b.width(), a.width()));
         String mode = HudModule.INSTANCE.listColor();
-        int rowH = u(15), pad = u(6), bar = Math.max(2, S);
+        // Each module is its own rounded glass pill: soft shadow, frosted body with a top gloss, and a
+        // glowing accent dot. Pills slide in from the right edge and the stack closes up smoothly.
+        int rowH = u(16), pad = u(7), gap = u(3), radius = u(6), dot = Math.max(3, u(5));
         int y = margin;
         int n = ROWS.size();
         for (int i = 0; i < n; i++) {
             Row row = ROWS.get(i);
             float e = 1f - (1f - row.slide()) * (1f - row.slide()) * (1f - row.slide());
-            int w = row.width() + pad * 2 + bar;
+            int w = row.width() + pad * 2 + dot + u(6);
             int x = pw - margin - w + Math.round((1f - e) * (w + margin));
             int color = switch (mode) {
                 case "Rainbow" -> hsl(Theme.hue - i * 14f, 0.9f, 0.66f);
                 case "White" -> Theme.TEXT;
                 default -> lerp(accent, accent2, n <= 1 ? 0f : i / (float) (n - 1));
             };
-            fill(g, x, y, w, rowH, alpha(0x0E1119, (int) (0xB8 * e)));
-            fill(g, x, y, w, Math.max(1, S / 2), alpha(0xFFFFFF, (int) (0x18 * e)));
-            round(g, x + w - bar - S, y + S, bar, rowH - 2 * S, bar / 2, color);
-            int cy = y + rowH / 2;
+            shadow(g, x, y, w, rowH, radius, u(4), Math.round(0x34 * e));
+            glass(g, x, y, w, rowH, radius, alpha(0x0E1119, Math.round(0xB4 * e)), 0.85f * e);
+            // faint accent wash from the dot side, so each pill picks up its color
+            if (FANCY) hgrad(g, x + radius, y + S, w - 2 * radius, rowH - 2 * S, alpha(color, 0), alpha(color, Math.round(0x16 * e)));
+            int cy = y + rowH / 2, dcx = x + w - pad - dot / 2;
+            glow(g, dcx, cy, dot * 2, color, 3, Math.round(16 * e));
+            circle(g, dcx, cy, dot / 2, color);
             text(g, x + pad, cy, row.name(), color, false);
             if (row.info() != null)
                 text(g, x + pad + textWidth(row.name(), false) + u(5), cy, row.info(), Theme.MUTED, false);
-            y += Math.round(rowH * e);
+            y += Math.round((rowH + gap) * e);
         }
         return y;
     }
@@ -576,7 +652,9 @@ public final class Hud {
             textC(g, gcx, gy + ringR + u(8), labels[i], Theme.MUTED, false);
         }
         text(g, x + u(10), y + ch - u(23), fit(inv, cw - u(20), false), Theme.SUBTEXT, false);
-        String clue = b.activityLabel + (b.activityWhy.isEmpty() ? "" : ": " + b.activityWhy.getFirst());
+        String clue = b.raidDamage >= 15 && !b.unraidedWhy.isEmpty()
+                ? b.raidLabel + ": " + b.unraidedWhy.getFirst().substring(2)
+                : b.activityLabel + (b.activityWhy.isEmpty() ? "" : ": " + b.activityWhy.getFirst());
         text(g, x + u(10), y + ch - u(11), fit(clue, cw - u(20), false), Theme.MUTED, false);
     }
 

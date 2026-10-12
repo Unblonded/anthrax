@@ -115,7 +115,7 @@ public final class IntelScreen extends Screen {
         List<Base> bases = finder.bases();
         List<Poi> pois = finder.pois();
         String sub = finder.isEnabled()
-                ? bases.size() + " bases   " + pois.size() + " structures   " + finder.scanned() + " chunks scanned"
+                ? finder.layerName() + "   " + bases.size() + " bases   " + pois.size() + " structures   " + finder.scanned() + " chunks scanned"
                 + (finder.queued() > 0 ? "   (" + finder.queued() + " queued)" : "")
                 : "Base Finder is off: enable it to start scanning";
         text(g, bx + bead + u(10), cy + u(8), sub, finder.isEnabled() ? Theme.MUTED : 0xFFFFC94A, false);

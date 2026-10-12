@@ -20,7 +20,8 @@ public final class WorldOverlays {
 
     private static final Overlay[] OVERLAYS = {
             StorageEspModule.INSTANCE, TracersModule.INSTANCE, HoleEspModule.INSTANCE,
-            LogoutSpotsModule.INSTANCE, BreadcrumbsModule.INSTANCE, TrajectoriesModule.INSTANCE
+            LogoutSpotsModule.INSTANCE, BreadcrumbsModule.INSTANCE, TrajectoriesModule.INSTANCE,
+            unblonded.anthrax.modules.world.AmethystEspModule.INSTANCE
     };
 
     public static void render(LevelRenderer renderer) {
@@ -43,5 +44,5 @@ public final class WorldOverlays {
         renderer.addMainThreadGizmos(collector.drainGizmos());
     }
 
-    static int argb(int alpha, int rgb) { return (Math.max(0, Math.min(255, alpha)) << 24) | (rgb & 0xFFFFFF); }
+    public static int argb(int alpha, int rgb) { return (Math.max(0, Math.min(255, alpha)) << 24) | (rgb & 0xFFFFFF); }
 }

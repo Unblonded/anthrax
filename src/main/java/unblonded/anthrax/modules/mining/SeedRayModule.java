@@ -9,7 +9,8 @@ import net.minecraft.gizmos.Gizmos;
 import net.minecraft.gizmos.SimpleGizmoCollector;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.LevelHeightAccessor;
+import net.minecraft.world.level.block.state.BlockState;
+import unblonded.anthrax.gui.Notifications;
 import unblonded.anthrax.modules.FeatureModule;
 import unblonded.anthrax.modules.Setting;
 
@@ -19,7 +20,12 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
-/** Seed-driven ore simulator using packet-edit's placement sequence and loaded chunk states. */
+/**
+ * Seed-based ore X-ray: re-runs vanilla ore generation from the world seed (see {@link SeedOrePredictor})
+ * and outlines every ore it places in the loaded chunks around you. Works through anti-xray, since fake
+ * ores are turned back into stone before simulating. "Verify accuracy" compares the prediction against
+ * the real blocks in loaded chunks (on servers without anti-xray), so you can confirm the seed is right.
+ */
 public final class SeedRayModule extends FeatureModule {
     public static final SeedRayModule INSTANCE = new SeedRayModule();
     private static final ExecutorService PREDICTOR = Executors.newSingleThreadExecutor(r -> {
@@ -27,29 +33,32 @@ public final class SeedRayModule extends FeatureModule {
     });
     public record Marker(BlockPos pos, int color) {}
     private record Ore(String name, Setting.Bool enabled, int color) {}
+    /** Result of a verification run. */
+    public record Accuracy(int predicted, int actual, int matched, int chunks) {
+        public double precision() { return predicted == 0 ? 1 : matched / (double) predicted; }
+        public double recall() { return actual == 0 ? 1 : matched / (double) actual; }
+    }
 
     private final Setting.Text worldSeed = setting(Setting.Text.standalone("World seed", "", 32));
     private final Setting.Num radius = setting(Setting.Num.standalone("Prediction radius (chunks)", 4, 1, 10, 1));
     private final Setting.Mode renderMode = setting(Setting.Mode.standalone("Render mode", "Wire", "Wire", "Glow"));
     private final Setting.Bool deepslateOres = setting(Setting.Bool.standalone("Deepslate ores", true));
+    private final Setting.Bool hideMined = setting(Setting.Bool.standalone("Hide mined ores", true));
+    private final Setting.Action verify = setting(new Setting.Action("Verify accuracy", () -> INSTANCE.verifyRequested = true));
     private final List<Ore> ores = new ArrayList<>();
+    private static final Set<String> ALL_ORES = Set.of("Coal", "Iron", "Gold", "Redstone", "Diamond", "Lapis", "Copper",
+            "Emerald", "Quartz", "Ancient Debris");
     private volatile List<Marker> markers = List.of();
+    private volatile Accuracy lastAccuracy;
+    private volatile boolean verifyRequested;
     private final AtomicBoolean predicting = new AtomicBoolean();
-    private final AtomicLong predictionGeneration = new AtomicLong();
-    private int requestedChunkX = Integer.MIN_VALUE, requestedChunkZ = Integer.MIN_VALUE;
-    private String requestedSeed = "";
-    private String requestedDimension = "";
-    private String requestedFilters = "";
-    private String requestedChunkLayout = "";
-    private String observedChunkLayout = "";
+    private final AtomicLong generation = new AtomicLong();
+    private String requestedKey = "", observedLayout = "";
     private ClientLevel observedWorld;
-    private long chunkLayoutChangedAt;
-    private int requestedRadius = -1;
-    private String observedPredictionKey = "";
-    private ClientLevel predictionWorld;
+    private long layoutChangedAt;
 
     private SeedRayModule() {
-        super("Seed-Ray", "Predict vanilla ore placements from the entered world seed", "Mining", false);
+        super("Seed-Ray", "Exact ore positions from the world seed, even through anti-xray", "Mining", false);
         addOre("Coal", 0xFF383838);
         addOre("Iron", 0xFFFFC18A);
         addOre("Gold", 0xFFFFD83D);
@@ -66,106 +75,166 @@ public final class SeedRayModule extends FeatureModule {
         ores.add(new Ore(name, setting(Setting.Bool.standalone(name, true)), color));
     }
 
-    @Override public void tick(Minecraft client) {
-        if (client.level == null || client.player == null) {
-            if (observedWorld != null) predictionGeneration.incrementAndGet();
-            markers = List.of();
-            requestedChunkX = Integer.MIN_VALUE;
-            observedChunkLayout = "";
-            requestedChunkLayout = "";
-            observedWorld = null;
-            observedPredictionKey = "";
-            predictionWorld = null;
-            requestedChunkX = Integer.MIN_VALUE;
-            return;
-        }
-        long seed;
-        try { seed = Long.parseLong(worldSeed.get().trim()); }
-        catch (NumberFormatException ignored) {
-            markers = List.of();
-            requestedSeed = "";
-            if (!observedPredictionKey.isEmpty()) predictionGeneration.incrementAndGet();
-            observedPredictionKey = "";
-            return;
-        }
-        int chunkX = client.player.chunkPosition().x(), chunkZ = client.player.chunkPosition().z();
-        int r = (int) radius.get();
-        String dimension = client.level.dimension().identifier().toString();
-        ClientLevel world = client.level;
-        String loadedLayout = loadedChunkLayout(world, chunkX, chunkZ, r);
-        long now = System.currentTimeMillis();
-        if (world != observedWorld || !loadedLayout.equals(observedChunkLayout)) {
-            observedWorld = world;
-            observedChunkLayout = loadedLayout;
-            chunkLayoutChangedAt = now;
-        }
-        String filters = ores.stream().map(o -> o.name + ":" + o.enabled.get()).reduce((a, b) -> a + ";" + b).orElse("")
-                + ";deepslate:" + deepslateOres.get();
-        String predictionKey = seed + "|" + chunkX + "|" + chunkZ + "|" + r + "|" + dimension + "|" + filters + "|" + loadedLayout;
-        if (world != predictionWorld || !predictionKey.equals(observedPredictionKey)) {
-            predictionWorld = world;
-            observedPredictionKey = predictionKey;
-            predictionGeneration.incrementAndGet();
-            markers = List.of();
-        }
-        if (chunkX == requestedChunkX && chunkZ == requestedChunkZ && r == requestedRadius
-                && dimension.equals(requestedDimension) && worldSeed.get().equals(requestedSeed)
-                && filters.equals(requestedFilters) && loadedLayout.equals(requestedChunkLayout)) return;
-        // Match packet-edit's chunk stability delay. The prediction reads live
-        // block states, so wait for streamed chunks to finish arriving first.
-        if (now - chunkLayoutChangedAt < 1000L) return;
-        if (!predicting.compareAndSet(false, true)) return;
+    /** Numeric seeds as-is; text seeds hash the way vanilla's world creation screen does. */
+    static OptionalLong parseSeed(String text) {
+        String s = text.trim();
+        if (s.isEmpty()) return OptionalLong.empty();
+        try { return OptionalLong.of(Long.parseLong(s)); }
+        catch (NumberFormatException e) { return OptionalLong.of(s.hashCode()); }
+    }
 
+    private OptionalLong seed(Minecraft mc) {
+        OptionalLong typed = parseSeed(worldSeed.get());
+        if (typed.isPresent()) return typed;
+        // singleplayer: the seed is right there
+        var server = mc.getSingleplayerServer();
+        return server == null ? OptionalLong.empty() : OptionalLong.of(server.overworld().getSeed());
+    }
+
+    @Override public void tick(Minecraft mc) {
+        ClientLevel world = mc.level;
+        if (world == null || mc.player == null) { reset(); return; }
+        OptionalLong seed = seed(mc);
+        if (seed.isEmpty()) { if (!markers.isEmpty()) reset(); return; }
+        int cx = mc.player.chunkPosition().x(), cz = mc.player.chunkPosition().z(), r = (int) radius.get();
+        String path = world.dimension().identifier().getPath();
+        if (!path.equals("overworld") && !path.equals("the_nether")) { markers = List.of(); return; }
+
+        // wait for streamed chunks to settle before snapshotting
+        String layout = layout(world, cx, cz, r + 1);
+        long now = System.currentTimeMillis();
+        if (world != observedWorld || !layout.equals(observedLayout)) {
+            observedWorld = world;
+            observedLayout = layout;
+            layoutChangedAt = now;
+        }
         Map<String, Integer> enabled = new HashMap<>();
         for (Ore ore : ores) if (ore.enabled.get()) enabled.put(ore.name, ore.color);
-        if (enabled.isEmpty()) { markers = List.of(); predicting.set(false); return; }
+        String key = seed.getAsLong() + "|" + cx + "|" + cz + "|" + r + "|" + path + "|" + enabled.keySet() + "|"
+                + deepslateOres.get() + hideMined.get() + "|" + layout;
+        boolean verifyNow = verifyRequested;
+        if (key.equals(requestedKey) && !verifyNow) return;
+        if (now - layoutChangedAt < 750L || !predicting.compareAndSet(false, true)) return;
+        verifyRequested = false;
+        requestedKey = key;
+        long gen = generation.incrementAndGet();
 
-        markers = List.of();
-        requestedChunkX = chunkX; requestedChunkZ = chunkZ; requestedRadius = r;
-        requestedDimension = dimension; requestedSeed = worldSeed.get(); requestedFilters = filters;
-        requestedChunkLayout = loadedLayout;
-        long generation = predictionGeneration.get();
-        LevelHeightAccessor levelHeight = LevelHeightAccessor.create(world.getMinY(), world.getHeight());
-        boolean deepslate = deepslateOres.get();
+        List<int[]> chunks = new ArrayList<>();
+        for (int dx = -r; dx <= r; dx++)
+            for (int dz = -r; dz <= r; dz++)
+                if (dx * dx + dz * dz <= r * r) chunks.add(new int[]{cx + dx, cz + dz});
+        chunks.sort(Comparator.comparingInt(c -> (c[0] - cx) * (c[0] - cx) + (c[1] - cz) * (c[1] - cz)));
+        // verification checks the whole square (more chunks with every neighbour simulated)
+        List<int[]> square = new ArrayList<>();
+        if (verifyNow) for (int dx = -r; dx <= r; dx++) for (int dz = -r; dz <= r; dz++) square.add(new int[]{cx + dx, cz + dz});
+        SeedOrePredictor.Snapshot snap = new SeedOrePredictor.Snapshot(world, cx, cz, r);
+        long s = seed.getAsLong();
+        boolean deepslate = deepslateOres.get(), hide = hideMined.get();
         PREDICTOR.execute(() -> {
             try {
-                List<Marker> result = SeedOrePredictor.predict(world, levelHeight, seed, chunkX, chunkZ, r, dimension, enabled, deepslate);
-                if (predictionGeneration.get() == generation && isEnabled()) markers = result;
-            } catch (RuntimeException exception) {
-                if (predictionGeneration.get() == generation) {
-                    markers = List.of();
-                    requestedChunkX = Integer.MIN_VALUE;
-                    System.err.println("Anthrax Seed-Ray: prediction failed: " + exception.getMessage());
+                List<SeedOrePredictor.Hit> hits = SeedOrePredictor.predict(snap, s, verifyNow ? square : chunks);
+                List<Marker> out = new ArrayList<>();
+                for (SeedOrePredictor.Hit h : hits) {
+                    Block b = h.state().getBlock();
+                    Integer color = enabled.get(oreName(b));
+                    if (color == null || (!deepslate && isDeepslate(b))) continue;
+                    BlockState now2 = snap.get(h.pos().getX(), h.pos().getY(), h.pos().getZ());
+                    if (hide && (now2.isAir() || !now2.getFluidState().isEmpty())) continue;
+                    out.add(new Marker(h.pos(), color));
                 }
+                if (generation.get() == gen && isEnabled()) markers = out;
+                if (verifyNow) report(verify(snap, hits, square, ALL_ORES, true));
+            } catch (RuntimeException e) {
+                requestedKey = "";
+                System.err.println("Anthrax Seed-Ray: prediction failed: " + e);
+                e.printStackTrace();
+                if (verifyNow) Notifications.error("Seed-Ray", "Prediction failed: " + e.getMessage());
             } finally { predicting.set(false); }
         });
     }
 
-    @Override protected void onToggle(boolean enabled) {
-        if (!enabled) {
-            predictionGeneration.incrementAndGet(); markers = List.of();
-            requestedChunkX = Integer.MIN_VALUE;
+    /**
+     * Compares predicted ores with the real blocks, in chunks whose neighbours were all predicted too
+     * (only there can every vein that reaches the chunk be accounted for).
+     */
+    static Accuracy verify(SeedOrePredictor.Snapshot snap, List<SeedOrePredictor.Hit> hits, List<int[]> chunks,
+                           Set<String> enabled, boolean deepslate) {
+        Set<Long> predictedChunks = new HashSet<>();
+        for (int[] c : chunks) if (snap.hasArea(c[0], c[1])) predictedChunks.add(net.minecraft.world.level.ChunkPos.pack(c[0], c[1]));
+        Set<Long> inner = new HashSet<>();
+        for (long k : predictedChunks) {
+            int x = net.minecraft.world.level.ChunkPos.getX(k), z = net.minecraft.world.level.ChunkPos.getZ(k);
+            boolean all = true;
+            for (int dx = -1; dx <= 1 && all; dx++)
+                for (int dz = -1; dz <= 1 && all; dz++)
+                    if (!predictedChunks.contains(net.minecraft.world.level.ChunkPos.pack(x + dx, z + dz))) all = false;
+            if (all) inner.add(k);
         }
+        Map<BlockPos, Block> predicted = new HashMap<>();
+        for (SeedOrePredictor.Hit h : hits) {
+            Block b = h.state().getBlock();
+            String name = oreName(b);
+            if (name == null || !enabled.contains(name) || (!deepslate && isDeepslate(b))) continue;
+            if (inner.contains(net.minecraft.world.level.ChunkPos.pack(h.pos().getX() >> 4, h.pos().getZ() >> 4))) predicted.put(h.pos(), b);
+        }
+        int actual = 0, matched = 0;
+        for (long k : inner) {
+            int bx = net.minecraft.world.level.ChunkPos.getX(k) << 4, bz = net.minecraft.world.level.ChunkPos.getZ(k) << 4;
+            for (int y = snap.minY; y < snap.minY + snap.height; y++)
+                for (int x = bx; x < bx + 16; x++)
+                    for (int z = bz; z < bz + 16; z++) {
+                        Block b = snap.get(x, y, z).getBlock();
+                        String name = oreName(b);
+                        if (name == null || !enabled.contains(name) || (!deepslate && isDeepslate(b))) continue;
+                        actual++;
+                        if (predicted.get(new BlockPos(x, y, z)) == b) matched++;
+                    }
+        }
+        return new Accuracy(predicted.size(), actual, matched, inner.size());
     }
 
-    private static String loadedChunkLayout(ClientLevel world, int centerX, int centerZ, int radius) {
-        StringBuilder layout = new StringBuilder((radius * 2 + 1) * (radius * 2 + 1));
-        for (int chunkX = centerX - radius; chunkX <= centerX + radius; chunkX++) {
-            for (int chunkZ = centerZ - radius; chunkZ <= centerZ + radius; chunkZ++) {
-                int dx = chunkX - centerX, dz = chunkZ - centerZ;
-                if (dx * dx + dz * dz <= radius * radius) layout.append(world.hasChunk(chunkX, chunkZ) ? '1' : '0');
-            }
-        }
-        return layout.toString();
+    private void report(Accuracy a) {
+        lastAccuracy = a;
+        String text = String.format("%d chunks: %.2f%% of predicted ores are real, %.2f%% of real ores predicted (%d/%d)",
+                a.chunks(), a.precision() * 100, a.recall() * 100, a.matched(), a.actual());
+        System.out.println("[Seed-Ray] verify " + text);
+        if (a.chunks() == 0) Notifications.error("Seed-Ray", "Not enough loaded chunks to verify; stand still a moment");
+        else if (a.precision() > 0.97 && a.recall() > 0.97) Notifications.success("Seed-Ray verified", text);
+        else if (a.precision() < 0.2) Notifications.error("Seed-Ray", "Wrong seed, or the server hides ores (anti-xray). " + text);
+        else Notifications.info("Seed-Ray", text);
+    }
+
+    public Accuracy lastAccuracy() { return lastAccuracy; }
+    public void requestVerify() { verifyRequested = true; }
+
+    private void reset() {
+        generation.incrementAndGet();
+        markers = List.of();
+        requestedKey = "";
+        observedWorld = null;
+        observedLayout = "";
+    }
+
+    @Override protected void onToggle(boolean enabled) { reset(); }
+
+    @Override public String hudInfo() { return markers.isEmpty() ? null : Integer.toString(markers.size()); }
+
+    private static String layout(ClientLevel world, int centerX, int centerZ, int radius) {
+        StringBuilder sb = new StringBuilder((radius * 2 + 1) * (radius * 2 + 1));
+        for (int x = centerX - radius; x <= centerX + radius; x++)
+            for (int z = centerZ - radius; z <= centerZ + radius; z++) sb.append(world.hasChunk(x, z) ? '1' : '0');
+        return sb.toString();
     }
 
     public static void renderGizmos(LevelRenderer renderer) {
         SeedRayModule module = INSTANCE;
-        if (!module.isEnabled() || module.markers.isEmpty()) return;
+        List<Marker> list = module.markers;
+        if (!module.isEnabled() || list.isEmpty()) return;
         SimpleGizmoCollector collector = new SimpleGizmoCollector();
+        boolean glow = module.renderMode.get().equals("Glow");
         try (var ignored = Gizmos.withCollector(collector)) {
-            for (Marker marker : module.markers) {
-                GizmoStyle style = module.renderMode.get().equals("Glow")
+            for (Marker marker : list) {
+                GizmoStyle style = glow
                         ? GizmoStyle.strokeAndFill(marker.color, 2.0f, (marker.color & 0x00FFFFFF) | 0x30000000)
                         : GizmoStyle.stroke(marker.color, 1.35f);
                 Gizmos.cuboid(marker.pos, style).setAlwaysOnTop();

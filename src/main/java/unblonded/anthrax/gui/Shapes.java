@@ -122,6 +122,59 @@ final class Shapes {
         }, false);
     }
 
+    // ------------------------------------------------------------------ logo
+    /** Apple-style squircle (superellipse, n = 5) filling a d x d square. */
+    private static float squircle(float x, float y, float d) {
+        float nx = Math.abs(x / d * 2 - 1), ny = Math.abs(y / d * 2 - 1);
+        return Math.pow(nx, 5) + Math.pow(ny, 5) <= 1 ? 1 : 0;
+    }
+
+    /** Distance from a point to a segment, in the same units. */
+    private static float segment(float px, float py, float ax, float ay, float bx, float by) {
+        float vx = bx - ax, vy = by - ay, wx = px - ax, wy = py - ay;
+        float t = Math.max(0, Math.min(1, (wx * vx + wy * vy) / (vx * vx + vy * vy)));
+        float dx = wx - vx * t, dy = wy - vy * t;
+        return (float) Math.sqrt(dx * dx + dy * dy);
+    }
+
+    /** Logo tile shape. */
+    static Identifier logoTile(int d) {
+        return make(key(6, d, 0, 0), "logo_tile" + d, d, d, false, (x, y) -> squircle(x, y, d), true);
+    }
+
+    /** Logo tile with alpha fading along the diagonal, tinted with the second accent for a gradient. */
+    static Identifier logoSheen(int d) {
+        return make(key(6, d, 1, 0), "logo_sheen" + d, d, d, false, (x, y) -> {
+            float t = Math.max(0, Math.min(1, (x + y) / (2f * d)));
+            return squircle(x, y, d) * t * t;
+        }, true);
+    }
+
+    /** Glossy highlight across the top of the tile. */
+    static Identifier logoGloss(int d) {
+        return make(key(6, d, 2, 0), "logo_gloss" + d, d, d, false, (x, y) -> {
+            float v = 1 - y / (d * 0.55f);
+            return v <= 0 ? 0 : squircle(x, y, d) * v * v * 0.55f;
+        }, true);
+    }
+
+    /**
+     * The Anthrax mark: a sharp "A" chevron with round-capped strokes and a spore dot in place of the
+     * crossbar, ringed by a thin orbit broken where it would cross the legs.
+     */
+    static Identifier logoMark(int d) {
+        return make(key(6, d, 3, 0), "logo_mark" + d, d, d, false, (x, y) -> {
+            float u = x / d, v = y / d;
+            float stroke = 0.065f;
+            float ax = 0.5f, ay = 0.19f, lx = 0.25f, rx = 0.75f, by = 0.80f;
+            if (segment(u, v, ax, ay, lx, by) <= stroke || segment(u, v, ax, ay, rx, by) <= stroke) return 1;
+            float dx = u - 0.5f, dy = v - 0.585f, r = (float) Math.sqrt(dx * dx + dy * dy);
+            if (r <= 0.075f) return 1;                                       // spore
+            if (Math.abs(r - 0.135f) <= 0.018f && dy > 0.02f) return 0.85f;  // orbit (lower half, between the legs)
+            return 0;
+        }, true);
+    }
+
     // ------------------------------------------------------------------ drawing helpers
     /** Draws a w x h region of a mask (u, v in mask pixels) tinted with {@code color}. */
     static void blit(GuiGraphicsExtractor g, Identifier mask, int x, int y, int w, int h,

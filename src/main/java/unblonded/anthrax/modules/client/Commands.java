@@ -244,6 +244,12 @@ public final class Commands {
 
     private static int keyCode(String name) {
         String n = name.toLowerCase(Locale.ROOT);
+        switch (n) {
+            case "middle", "mb3", "mouse3" -> { return Keybinds.MOUSE_BASE + 2; }
+            case "mb4", "mouse4" -> { return Keybinds.MOUSE_BASE + 3; }
+            case "mb5", "mouse5" -> { return Keybinds.MOUSE_BASE + 4; }
+            default -> {}
+        }
         if (n.length() == 1) {
             char c = Character.toUpperCase(n.charAt(0));
             if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) return c;

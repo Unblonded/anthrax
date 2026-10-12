@@ -75,7 +75,9 @@ final class BaseScanner {
         FURNACE, LIT_FURNACE, POWERED, JUKEBOX_DISC, LECTERN_BOOK, BREWING_BOTTLE, ANCHOR_CHARGED, COMPOSTER_FILLED,
         CROPS, CROPS_MATURE, BED_PART, TNT, FIRE, TRAP, IRON_DOOR_PART, OBSIDIAN, CANDLE_LIT,
         COPPER_FRESH, COPPER_EXPOSED, COPPER_WEATHERED, COPPER_OXIDIZED, COPPER_WAXED,
-        PORTAL_FRAME, PORTAL_FRAME_EYE, END_PORTAL, NETHER_PORTAL, SPAWNER, VALUABLE, BEACON, BUDDING_AMETHYST }
+        PORTAL_FRAME, PORTAL_FRAME_EYE, END_PORTAL, NETHER_PORTAL, SPAWNER, VALUABLE, BEACON, BUDDING_AMETHYST,
+        /** Raid damage: flowing lava high up (lava casts) and ground columns blown out into bowls. */
+        LAVA_FLOW, CRATER }
 
     private enum SigKind { CHEST, TRAPPED, BARREL, SHULKER, ENDER, HOPPER, DISPENSER, CRAFTER, FURNACE, LAMP, PISTON,
         POWERABLE, JUKEBOX, LECTERN, BREWING, ANCHOR, COMPOSTER, CROP, BED, TNT, FIRE, TRAP, IRON_DOOR, OBSIDIAN, CANDLE,
@@ -362,7 +364,7 @@ final class BaseScanner {
 
     /** Raw evidence for one chunk. Scores are computed later, when neighbouring structure markers are known. */
     static final class ChunkReport {
-        final int chunkX, chunkZ;
+        final int chunkX, chunkZ, layer;
         final int[] blockCounts = new int[FEATURES.size()];
         final int[] entityCounts = new int[FEATURES.size()];
         final EnumSet<Structure> structures = EnumSet.noneOf(Structure.class);
@@ -376,7 +378,7 @@ final class BaseScanner {
         int keyYSum, keyYCount;
         long scannedAt;
 
-        ChunkReport(int chunkX, int chunkZ) { this.chunkX = chunkX; this.chunkZ = chunkZ; }
+        ChunkReport(int chunkX, int chunkZ, int layer) { this.chunkX = chunkX; this.chunkZ = chunkZ; this.layer = layer; }
 
         int count(Feature f) { return blockCounts[f.id] + entityCounts[f.id]; }
 
@@ -385,7 +387,8 @@ final class BaseScanner {
         boolean empty() {
             for (int i = 0; i < blockCounts.length; i++) if (blockCounts[i] != 0 || entityCounts[i] != 0) return false;
             // Chunks that only carry structure markers or amethyst still matter (suppression, the amethyst clock).
-            return structures.isEmpty() && amethystFaces == 0 && entities == EntityIntel.EMPTY;
+            return structures.isEmpty() && amethystFaces == 0 && entities == EntityIntel.EMPTY
+                    && sig(Signal.CRATER) == 0 && sig(Signal.LAVA_FLOW) == 0;
         }
     }
 
@@ -393,6 +396,8 @@ final class BaseScanner {
     static final class EntityIntel {
         static final EntityIntel EMPTY = new EntityIntel();
         int framesFull, framesEmpty, elytraFrames, standsDressed, standsBare, drops, xpOrbs, villagers, vehicles;
+        /** Raid aftermath: valuables and block items lying around, live TNT and withers. */
+        int lootDrops, debrisDrops, tntEntities, withers;
         final Set<String> named = new LinkedHashSet<>();
         final Set<String> owners = new LinkedHashSet<>();
         final Set<String> players = new LinkedHashSet<>();
@@ -408,8 +413,15 @@ final class BaseScanner {
      * client thread (a few array copies), then analysed on the Base Finder worker thread, so scanning
      * never stalls the game.
      */
+    /** A piece of block-entity text and the height it was found at. */
+    record Tagged(int y, String text) {}
+
+    /** Layer index: deepslate (below y=0) and surface (y=0 and up) are analysed separately. */
+    static final int DEEP = 0, SURFACE = 1;
+    static int layerOf(double y) { return y < 0 ? DEEP : SURFACE; }
+
     record Snapshot(int chunkX, int chunkZ, LevelChunkSection[] sections, int minSectionY,
-                    List<String> signs, List<String> heads) {
+                    List<Tagged> signs, List<Tagged> heads) {
         BlockState state(int lx, int y, int lz) {
             int index = (y >> 4) - minSectionY;
             if (lx < 0 || lx > 15 || lz < 0 || lz > 15 || index < 0 || index >= sections.length || sections[index] == null)
@@ -423,24 +435,28 @@ final class BaseScanner {
         LevelChunkSection[] copy = new LevelChunkSection[live.length];
         for (int i = 0; i < live.length; i++)
             if (live[i] != null && !live[i].hasOnlyAir()) copy[i] = live[i].copy();
-        List<String> signs = new ArrayList<>();
-        List<String> heads = new ArrayList<>();
+        List<Tagged> signs = new ArrayList<>();
+        List<Tagged> heads = new ArrayList<>();
         for (BlockEntity be : chunk.getBlockEntities().values()) {
-            if (be instanceof SignBlockEntity sign && signs.size() < 8) {
+            int y = be.getBlockPos().getY();
+            if (be instanceof SignBlockEntity sign && signs.size() < 16) {
                 String text = (signText(sign.getFrontText()) + " " + signText(sign.getBackText())).trim().replaceAll("\\s+", " ");
-                if (!text.isEmpty()) signs.add(text);
+                if (!text.isEmpty()) signs.add(new Tagged(y, text));
             } else if (be instanceof SkullBlockEntity skull && skull.getOwnerProfile() != null) {
-                skull.getOwnerProfile().name().ifPresent(heads::add);
+                skull.getOwnerProfile().name().ifPresent(n -> heads.add(new Tagged(y, n)));
             }
         }
         return new Snapshot(chunk.getPos().x(), chunk.getPos().z(), copy, chunk.getMinSectionY(), signs, heads);
     }
 
-    /** Thread-safe: works only on the snapshot. */
-    static ChunkReport scan(Snapshot snap) {
+    /**
+     * Thread-safe: works only on the snapshot. Returns one report per layer ({@link #DEEP}, {@link #SURFACE}),
+     * so a cave stash and a surface base above it are never blended together.
+     */
+    static ChunkReport[] scan(Snapshot snap) {
         build();
-        ChunkReport report = new ChunkReport(snap.chunkX(), snap.chunkZ());
-        int[] markers = new int[Marker.values().length];
+        ChunkReport[] layers = {new ChunkReport(snap.chunkX(), snap.chunkZ(), DEEP), new ChunkReport(snap.chunkX(), snap.chunkZ(), SURFACE)};
+        int[][] markerSets = new int[2][Marker.values().length];
         LevelChunkSection[] sections = snap.sections();
         int baseX = snap.chunkX() << 4, baseZ = snap.chunkZ() << 4;
         for (int i = 0; i < sections.length; i++) {
@@ -448,6 +464,8 @@ final class BaseScanner {
             if (section == null) continue;
             boolean[] trackHere = {false};
             int baseY = (snap.minSectionY() + i) << 4;
+            final ChunkReport report = layers[layerOf(baseY)];
+            final int[] markers = markerSets[layerOf(baseY)];
             // Ancient cities sit near y=-51; deepslate bricks/tiles that deep are almost never player-made.
             boolean deep = baseY < -16;
             section.getStates().count((state, n) -> {
@@ -461,6 +479,9 @@ final class BaseScanner {
                 if (m != null && (m != Marker.DEEP_BRICKS || deep)) markers[m.ordinal()] += n;
                 SigKind k = SIGNALS.get(block);
                 if (k != null) signal(report, k, state, n);
+                // flowing lava up at build height is almost always a lava cast poured over a base
+                if (baseY >= 48 && block == net.minecraft.world.level.block.Blocks.LAVA && !state.getFluidState().isSource())
+                    add(report, Signal.LAVA_FLOW, n);
             });
             if (report.sig(Signal.BUDDING_AMETHYST) > 0 && section.maybeHas(st -> SIGNALS.get(st.getBlock()) == SigKind.BUDDING))
                 amethyst(snap, report, section, baseY);
@@ -479,11 +500,15 @@ final class BaseScanner {
                         if (report.keys.size() >= MAX_KEYS_PER_CHUNK) break;
                     }
         }
-        detectStructures(report, markers);
-        report.signs.addAll(snap.signs());
-        report.heads.addAll(snap.heads());
-        report.scannedAt = System.currentTimeMillis();
-        return report;
+        long now = System.currentTimeMillis();
+        craters(snap, layers[SURFACE]);
+        for (int l = 0; l < 2; l++) {
+            detectStructures(layers[l], markerSets[l]);
+            layers[l].scannedAt = now;
+        }
+        for (Tagged t : snap.signs()) layers[layerOf(t.y())].signs.add(t.text());
+        for (Tagged t : snap.heads()) layers[layerOf(t.y())].heads.add(t.text());
+        return layers;
     }
 
     private static void signal(ChunkReport r, SigKind k, BlockState state, int n) {
@@ -563,6 +588,79 @@ final class BaseScanner {
      * face only grows (about 1.76 stages per hour) while a player is within simulation distance. So the
      * maturity of the faces measures how long players have spent near this chunk.
      */
+    private static final Set<String> RAW_GROUND = Set.of("dirt", "coarse_dirt", "rooted_dirt", "mud");
+    private static final Set<Block> RAW_GROUND_BLOCKS = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+
+    /**
+     * Explosion craters. Crystals and TNT blow bowls into the ground and strip the grass, leaving raw
+     * dirt at the bottom. Stone is left out: mountains are full of natural stone hollows. A column counts when it is bare dirt and at least 3 blocks below 7 of
+     * the 8 points on a 4-block ring around it: ravines (open along their axis), ponds (water is the
+     * surface) and grassy courtyards (grass is not raw ground) do not match.
+     */
+    private static void craters(Snapshot snap, ChunkReport r) {
+        if (RAW_GROUND_BLOCKS.isEmpty())
+            synchronized (RAW_GROUND_BLOCKS) {
+                if (RAW_GROUND_BLOCKS.isEmpty())
+                    for (Block b : BuiltInRegistries.BLOCK) if (RAW_GROUND.contains(BuiltInRegistries.BLOCK.getKey(b).getPath())) RAW_GROUND_BLOCKS.add(b);
+            }
+        int topY = -1;
+        LevelChunkSection[] sections = snap.sections();
+        for (int i = sections.length - 1; i >= 0; i--)
+            if (sections[i] != null) { topY = ((snap.minSectionY() + i) << 4) + 15; break; }
+        if (topY < 0) return;
+        int[] h = new int[256];
+        Block[] top = new Block[256];
+        for (int z = 0; z < 16; z++)
+            for (int x = 0; x < 16; x++) {
+                int idx = z * 16 + x;
+                h[idx] = Integer.MIN_VALUE;
+                for (int y = topY; y >= 0; y--) {
+                    BlockState st = snap.state(x, y, z);
+                    if (st == null) { y &= ~15; continue; }          // empty section: skip it whole
+                    if (st.isAir()) continue;
+                    if (st.getFluidState().isEmpty() && (!st.blocksMotion() || st.is(net.minecraft.tags.BlockTags.LEAVES) || st.is(net.minecraft.tags.BlockTags.LOGS)
+                            || st.getBlock() instanceof net.minecraft.world.level.block.HugeMushroomBlock)) continue;   // trees are not terrain
+                    h[idx] = y;
+                    top[idx] = st.getBlock();
+                    break;
+                }
+            }
+        int count = 0;
+        for (int z = 0; z < 16; z++)
+            for (int x = 0; x < 16; x++) {
+                int c = h[z * 16 + x];
+                if (c == Integer.MIN_VALUE || !RAW_GROUND_BLOCKS.contains(top[z * 16 + x])) continue;
+                // small blasts are caught by the inner rings, big crystal/TNT bowls by the 7-block one
+                if (rimAbove(h, x, z, c, 3) || rimAbove(h, x, z, c, 5) || rimAbove(h, x, z, c, 7)) count++;
+            }
+        if (count > 0) add(r, Signal.CRATER, count);
+    }
+
+    /** Ring directions in opposite pairs: (0,1) (2,3) are the x axis... */
+    private static final int[][] RING = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {-1, -1}, {1, -1}, {-1, 1}};
+
+    /**
+     * True when the ground rises at least 3 blocks on the ring of radius {@code r} around a column, in
+     * a bowl: at least two opposite pairs of ring points must be known and higher, and every known point
+     * must be higher (one miss allowed when all 8 are known). Ring points outside the chunk are unknown.
+     * Cliff edges and valleys rise on one side or one axis only, so they never pass.
+     */
+    private static boolean rimAbove(int[] h, int x, int z, int c, int r) {
+        int known = 0, higher = 0, pairs = 0;
+        boolean[] up = new boolean[8], seen = new boolean[8];
+        for (int i = 0; i < 8; i++) {
+            int[] o = RING[i];
+            int d = o[0] != 0 && o[1] != 0 ? Math.round(r * 0.72f) : r;
+            int nx = x + o[0] * d, nz = z + o[1] * d;
+            if (nx < 0 || nx > 15 || nz < 0 || nz > 15 || h[nz * 16 + nx] == Integer.MIN_VALUE) continue;
+            seen[i] = true;
+            known++;
+            if (h[nz * 16 + nx] - c >= 3) { higher++; up[i] = true; }
+        }
+        for (int i = 0; i < 8; i += 2) if (seen[i] && seen[i + 1] && up[i] && up[i + 1]) pairs++;
+        return pairs >= 2 && higher >= known - (known == 8 ? 1 : 0);
+    }
+
     private static void amethyst(Snapshot snap, ChunkReport r, LevelChunkSection section, int baseY) {
         for (int y = 0; y < 16; y++)
             for (int z = 0; z < 16; z++)

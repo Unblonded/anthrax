@@ -2,6 +2,7 @@ package unblonded.anthrax.mixin;
 
 import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -23,6 +24,16 @@ public abstract class CameraMixin {
     private void anthrax$zoom(float partial, CallbackInfoReturnable<Float> cir) {
         float factor = ZoomModule.INSTANCE.factor();
         if (factor > 1.001f) cir.setReturnValue(cir.getReturnValueF() / factor);
+    }
+
+    /**
+     * Occlusion culling walks outward from the camera's section; from a detached camera (often inside
+     * blocks, or far from where the player's chunk data was traced) it hides whole areas. Vanilla
+     * turns it off for spectators inside blocks; freecam turns it off entirely.
+     */
+    @Inject(method = "extractRenderState", at = @At("TAIL"))
+    private void anthrax$freecamCulling(CameraRenderState state, float partial, CallbackInfo ci) {
+        if (FreecamModule.INSTANCE.active()) state.smartCull = false;
     }
 
     @Inject(method = "update", at = @At("TAIL"))

@@ -65,6 +65,8 @@ public final class BaseFinderModule extends FeatureModule {
     public static final class Base {
         /** Stable across re-clustering, so UI animations and selections follow the same base. */
         public long id;
+        /** {@link BaseScanner#DEEP} or {@link BaseScanner#SURFACE}. */
+        public int layer;
         public String type;
         public int color;
         public float score;
@@ -99,6 +101,12 @@ public final class BaseFinderModule extends FeatureModule {
         /** Estimated hours of player presence from the amethyst clock, -1 if no geode nearby. */
         public float amethystHours = -1;
         public int amethystFaces;
+        // ---- raid aftermath
+        public int crystals, craters, lavaFlows, lootDrops, debrisDrops, tntEntities, withers, workstations, portals;
+        public final List<String> raiderSigns = new ArrayList<>();
+        /** Weight of the raid evidence (0 = none, 30+ = clearly raided); drives {@link #raidLabel}. */
+        public int raidDamage;
+        public String raidLabel = "";
         // ---- assessments (0..100) with the evidence behind them
         public int unraided, activity;
         public String activityLabel = "";
@@ -113,6 +121,7 @@ public final class BaseFinderModule extends FeatureModule {
         public int x, y, z, color;
         public final List<String> notes = new ArrayList<>();
         public boolean touched;
+        public int layer;
     }
 
     // ---- detection
@@ -121,6 +130,7 @@ public final class BaseFinderModule extends FeatureModule {
     private final Setting.Bool ignoreNatural = setting(Setting.Bool.standalone("Ignore natural structures", true));
     private final Setting.Num scanSpeed = setting(Setting.Num.standalone("Scan speed (chunks/tick)", 4, 1, 24, 1));
     private final Setting.Bool multithreaded = setting(Setting.Bool.standalone("Multithreaded scanning", true));
+    private final Setting.Bool rescanOnTeleport = setting(Setting.Bool.standalone("Clear and rescan on teleport", true));
     // ---- what counts
     private final Setting.Bool useStorage = setting(Setting.Bool.standalone("Detect storage", true));
     private final Setting.Bool useValuables = setting(Setting.Bool.standalone("Detect valuables", true));
@@ -158,7 +168,31 @@ public final class BaseFinderModule extends FeatureModule {
         t.setPriority(Thread.MIN_PRIORITY + 1);
         return t;
     });
-    private record Result(long generation, long key, ChunkReport report) {}
+    private record Result(long generation, long key, ChunkReport[] reports) {}
+
+    /** Deepslate-layer reports live in their own key space, far beyond any real chunk coordinate. */
+    private static final int DEEP_OFFSET = 1 << 24;
+
+    static long key(int cx, int cz, int layer) {
+        return ChunkPos.pack(cx, layer == BaseScanner.DEEP ? cz + DEEP_OFFSET : cz);
+    }
+
+    private static int layerOfKey(long key) { return ChunkPos.getZ(key) > DEEP_OFFSET / 2 ? BaseScanner.DEEP : BaseScanner.SURFACE; }
+    private static int realZ(long key) { int z = ChunkPos.getZ(key); return z > DEEP_OFFSET / 2 ? z - DEEP_OFFSET : z; }
+
+    private static int shownLayer = BaseScanner.SURFACE;
+
+    /**
+     * The layer the player is in; only that layer is shown. A one-block buffer around y=0 stops the
+     * display flipping back and forth while you stand on the boundary.
+     */
+    private static int playerLayer() {
+        var p = Minecraft.getInstance().player;
+        if (p == null) return shownLayer;
+        if (shownLayer == BaseScanner.SURFACE && p.getY() < -1) shownLayer = BaseScanner.DEEP;
+        else if (shownLayer == BaseScanner.DEEP && p.getY() >= 1) shownLayer = BaseScanner.SURFACE;
+        return shownLayer;
+    }
     private final java.util.concurrent.ConcurrentLinkedQueue<Result> results = new java.util.concurrent.ConcurrentLinkedQueue<>();
     private final java.util.concurrent.atomic.AtomicInteger inFlight = new java.util.concurrent.atomic.AtomicInteger();
     /** Bumped on reset so results from a previous world are dropped. */
@@ -167,6 +201,7 @@ public final class BaseFinderModule extends FeatureModule {
     private final ArrayDeque<Long> queue = new ArrayDeque<>();
     private final Set<Long> queued = new HashSet<>();
     private volatile List<Base> bases = List.of();
+    private final java.util.concurrent.atomic.AtomicReference<Object[]> layerView = new java.util.concurrent.atomic.AtomicReference<>();
     private volatile List<Poi> pois = List.of();
     private int trackedX = Integer.MIN_VALUE, trackedZ;
     private ClientLevel level;
@@ -175,6 +210,7 @@ public final class BaseFinderModule extends FeatureModule {
     private boolean dirty;
     private int scannedTotal;
     private String settingsKey = "";
+    private Vec3 lastPos;
 
     private BaseFinderModule() {
         super("Base Finder", "Detect, classify and track player bases, stashes and farms in loaded chunks", "World", false);
@@ -203,6 +239,7 @@ public final class BaseFinderModule extends FeatureModule {
         bases = List.of();
         pois = List.of();
         scannedTotal = 0;
+        lastPos = null;
         dirty = false;
     }
 
@@ -234,6 +271,15 @@ public final class BaseFinderModule extends FeatureModule {
             rescanAll();
         }
         long now = System.currentTimeMillis();
+        // A jump of more than 64 blocks in one tick is a teleport (/tp, /home, warps, pearl stasis):
+        // the old area's results are stale, so start over around the new position.
+        Vec3 pos = client.player.position();
+        if (lastPos != null && rescanOnTeleport.get() && pos.distanceToSqr(lastPos) > 64 * 64) {
+            reset();
+            rescanAll();
+            if (notify.get()) Notifications.info("Base Finder", "Teleport detected, rescanning");
+        }
+        lastPos = pos;
         String key = sensitivity.get() + ignoreNatural.get() + minBase.get() + useStorage.get() + useValuables.get()
                 + useRedstone.get() + usePortals.get() + useBuilds.get() + useFarms.get() + useActivity.get() + useAmethyst.get();
         if (!key.equals(settingsKey)) { settingsKey = key; dirty = true; }
@@ -258,25 +304,26 @@ public final class BaseFinderModule extends FeatureModule {
                 apply(chunkKey, BaseScanner.scan(snap));
             }
         }
-        for (Result r; (r = results.poll()) != null; ) if (r.generation() == generation) apply(r.key(), r.report());
+        for (Result r; (r = results.poll()) != null; ) if (r.generation() == generation) apply(r.key(), r.reports());
         if (now - lastEntityPass > 2000) { lastEntityPass = now; entityPass(); }
         if (now - lastRequeue > 90_000) { lastRequeue = now; rescanAll(); }
         // Re-cluster at most every 1.5 s; results are smoothed in stabilize().
         if (dirty && now - lastCluster > 1500) { lastCluster = now; dirty = false; cluster(client); }
     }
 
-    private void apply(long chunkKey, ChunkReport report) {
-        {
-            ChunkReport previous = reports.get(chunkKey);
+    private void apply(long chunkKey, ChunkReport[] layers) {
+        for (ChunkReport report : layers) {
+            long layerKey = key(report.chunkX, report.chunkZ, report.layer);
+            ChunkReport previous = reports.get(layerKey);
             if (previous != null) {
                 System.arraycopy(previous.entityCounts, 0, report.entityCounts, 0, report.entityCounts.length);
                 report.entities = previous.entities;
             }
-            if (report.empty()) reports.remove(chunkKey);
-            else reports.put(chunkKey, report);
-            scannedTotal++;
+            if (report.empty()) reports.remove(layerKey);
+            else reports.put(layerKey, report);
             dirty = true;
         }
+        scannedTotal++;
     }
 
     /** Entities that only players create or gather, plus who owns or named them and who is here now. */
@@ -288,7 +335,7 @@ public final class BaseFinderModule extends FeatureModule {
         Minecraft mc = Minecraft.getInstance();
         for (Entity e : level.entitiesForRendering()) {
             if (e == mc.player) continue;
-            long key = ChunkPos.pack(e.blockPosition().getX() >> 4, e.blockPosition().getZ() >> 4);
+            long key = key(e.blockPosition().getX() >> 4, e.blockPosition().getZ() >> 4, BaseScanner.layerOf(e.getY()));
             Feature f = null;
             EntityIntel intel;
             if (e instanceof ItemFrame frame) {
@@ -308,7 +355,20 @@ public final class BaseFinderModule extends FeatureModule {
             else if (e instanceof EndCrystal) f = BaseScanner.END_CRYSTAL;
             else if (e instanceof AbstractVillager) intel(key).villagers++;
             else if (e instanceof MinecartChest) { chestCarts.add(key); continue; }
-            else if (e instanceof ItemEntity) intel(key).drops++;
+            else if (e instanceof ItemEntity item) {
+                EntityIntel in = intel(key);
+                in.drops++;
+                var stack = item.getItem();
+                if (stack.getItem() instanceof net.minecraft.world.item.BlockItem bi && bi.getBlock() instanceof net.minecraft.world.level.block.ShulkerBoxBlock
+                        || stack.isEnchanted() || stack.is(Items.TOTEM_OF_UNDYING) || stack.is(Items.ELYTRA) || stack.is(Items.ENCHANTED_GOLDEN_APPLE)
+                        || stack.is(Items.DIAMOND) || stack.is(Items.NETHERITE_INGOT) || stack.is(Items.NETHERITE_SCRAP) || stack.is(Items.ENDER_CHEST))
+                    in.lootDrops++;
+                else if (stack.getItem() instanceof net.minecraft.world.item.BlockItem) in.debrisDrops++;
+            }
+            else if (typeIs(e, "tnt", "tnt_minecart"))
+                intel(key).tntEntities++;
+            else if (typeIs(e, "wither", "wither_skull"))
+                intel(key).withers++;
             else if (e instanceof ExperienceOrb) intel(key).xpOrbs++;
             else if (e instanceof AbstractBoat) intel(key).vehicles++;
             else if (e instanceof Player p) intel(key).players.add(p.getName().getString());
@@ -331,6 +391,11 @@ public final class BaseFinderModule extends FeatureModule {
         dirty = true;
     }
 
+    private static boolean typeIs(Entity e, String a, String b) {
+        String id = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).getPath();
+        return id.equals(a) || id.equals(b);
+    }
+
     private EntityIntel intel(long key) {
         ChunkReport r = report(key);
         if (r.entities == EntityIntel.EMPTY) r.entities = new EntityIntel();
@@ -338,7 +403,7 @@ public final class BaseFinderModule extends FeatureModule {
     }
 
     private ChunkReport report(long key) {
-        return reports.computeIfAbsent(key, k -> new ChunkReport(ChunkPos.getX(k), ChunkPos.getZ(k)));
+        return reports.computeIfAbsent(key, k -> new ChunkReport(ChunkPos.getX(k), realZ(k), layerOfKey(k)));
     }
 
     // ------------------------------------------------------------------ clustering
@@ -368,7 +433,7 @@ public final class BaseFinderModule extends FeatureModule {
         int faces = 0, stages = 0, budding = 0;
         for (int dx = -1; dx <= 1; dx++)
             for (int dz = -1; dz <= 1; dz++) {
-                ChunkReport n = reports.get(ChunkPos.pack(r.chunkX + dx, r.chunkZ + dz));
+                ChunkReport n = reports.get(key(r.chunkX + dx, r.chunkZ + dz, r.layer));
                 if (n != null) { faces += n.amethystFaces; stages += n.amethystStageSum; budding += n.amethystBudding; }
             }
         return faces >= 8 ? AmethystClock.hours(faces, stages, budding) : -1f;
@@ -387,7 +452,7 @@ public final class BaseFinderModule extends FeatureModule {
             EnumSet<Structure> nearby = EnumSet.noneOf(Structure.class);
             for (int dx = -2; dx <= 2; dx++)
                 for (int dz = -2; dz <= 2; dz++) {
-                    ChunkReport n = reports.get(ChunkPos.pack(r.chunkX + dx, r.chunkZ + dz));
+                    ChunkReport n = reports.get(key(r.chunkX + dx, r.chunkZ + dz, r.layer));
                     if (n != null) nearby.addAll(n.structures);
                 }
             float[] cats = new float[Category.values().length];
@@ -403,6 +468,11 @@ public final class BaseFinderModule extends FeatureModule {
                     feats[BaseScanner.AMETHYST_GROWTH.id] += a;
                 }
             }
+            // Raid aftermath is evidence too: a base bombed down to the dirt still marks where players lived.
+            // (Craters only lower the unraided score of a base found by other evidence; terrain can mimic them.)
+            float raid = Math.min(40f, r.entities.lootDrops * 8f) + (r.entities.debrisDrops >= 12 ? 15f : 0);
+            for (String sign : r.signs) if (RAIDER_SIGN.matcher(sign).find()) { raid += 40; break; }
+            if (raid > 0) { score += raid; cats[Category.ACTIVITY.ordinal()] += raid; }
             if (score >= threshold) active.put(entry.getKey(), new Scored(r, score, cats, feats));
         }
 
@@ -420,7 +490,7 @@ public final class BaseFinderModule extends FeatureModule {
                 members.add(sc);
                 for (int dx = -2; dx <= 2; dx++)
                     for (int dz = -2; dz <= 2; dz++) {
-                        long nk = ChunkPos.pack(sc.report.chunkX + dx, sc.report.chunkZ + dz);
+                        long nk = key(sc.report.chunkX + dx, sc.report.chunkZ + dz, sc.report.layer);
                         if (active.containsKey(nk) && seen.add(nk)) frontier.add(nk);
                     }
             }
@@ -437,7 +507,7 @@ public final class BaseFinderModule extends FeatureModule {
             Base match = null;
             long bestD = 64L * 64;
             for (Base old : previous) {
-                if (claimed.contains(old)) continue;
+                if (claimed.contains(old) || old.layer != base.layer) continue;
                 long dx = old.x - base.x, dz = old.z - base.z, d = dx * dx + dz * dz;
                 if (d < bestD) { bestD = d; match = old; }
             }
@@ -453,7 +523,7 @@ public final class BaseFinderModule extends FeatureModule {
                 base.firstSeen = now;
                 base.known = BaseLog.isKnown(base.x, base.z);
             }
-            if (!base.announced) {
+            if (!base.announced && base.layer == playerLayer()) {
                 base.announced = true;
                 if (log.get() && !base.known) BaseLog.append(level, base);
                 if (notify.get() && (!base.known || notifyKnown.get()) && client.player != null) {
@@ -483,7 +553,7 @@ public final class BaseFinderModule extends FeatureModule {
         now.confidence = ease(before.confidence, now.confidence);
         now.unraided = ease(before.unraided, now.unraided);
         now.activity = ease(before.activity, now.activity);
-        now.activityLabel = activityLabel(now.activity);
+        now.activityLabel = activityLabel(now);
         if (before.amethystHours >= 0 && now.amethystHours >= 0)
             now.amethystHours = before.amethystHours + (now.amethystHours - before.amethystHours) * 0.4f;
     }
@@ -492,6 +562,12 @@ public final class BaseFinderModule extends FeatureModule {
         int diff = target - before;
         if (Math.abs(diff) <= 2) return before;                  // deadband
         return before + Math.round(diff * 0.4f);
+    }
+
+    /** A raided base is not "active": recent signals there are the raid itself. */
+    static String activityLabel(Base b) {
+        if (b.raidDamage >= 30) return b.activity >= 55 ? "Raided recently" : "Raided, abandoned";
+        return activityLabel(b.activity);
     }
 
     static String activityLabel(int activity) {
@@ -531,10 +607,11 @@ public final class BaseFinderModule extends FeatureModule {
             yCount += r.keyYCount;
         }
         b.score = total;
+        b.layer = members.getFirst().report.layer;
         b.chunks = members.size();
         b.x = Math.round(wx / total);
         b.z = Math.round(wz / total);
-        b.y = yCount > 0 ? ySum / yCount : 64;
+        b.y = yCount > 0 ? ySum / yCount : (b.layer == BaseScanner.DEEP ? -32 : 64);
         if (b.minY == Integer.MAX_VALUE) { b.minY = b.y - 4; b.maxY = b.y + 4; }
         b.confidence = (int) Math.round(100 * (1 - Math.exp(-total / 250.0)));
         b.type = classify(cats, total, featCounts, feats[BaseScanner.AMETHYST_GROWTH.id]);
@@ -552,7 +629,7 @@ public final class BaseFinderModule extends FeatureModule {
         int faces = 0, stageSum = 0, budding = 0;
         for (int cx = b.minChunkX - 1; cx <= b.maxChunkX + 1; cx++)
             for (int cz = b.minChunkZ - 1; cz <= b.maxChunkZ + 1; cz++) {
-                ChunkReport r = reports.get(ChunkPos.pack(cx, cz));
+                ChunkReport r = reports.get(key(cx, cz, b.layer));
                 if (r == null) continue;
                 nearby.addAll(r.structures);
                 b.singleChests += r.sig(Signal.CHEST_SINGLE);
@@ -595,11 +672,18 @@ public final class BaseFinderModule extends FeatureModule {
                 for (String o : e.owners) { b.pets++; if (!b.owners.contains(o)) b.owners.add(o); }
                 for (String n : e.named) if (b.named.size() < 10 && !b.named.contains(n)) b.named.add(n);
                 for (String p : e.players) if (!b.playersHere.contains(p)) b.playersHere.add(p);
+                b.lootDrops += e.lootDrops; b.debrisDrops += e.debrisDrops; b.tntEntities += e.tntEntities; b.withers += e.withers;
+                b.crystals += r.entityCounts[BaseScanner.END_CRYSTAL.id];
+                if (cx >= b.minChunkX && cx <= b.maxChunkX && cz >= b.minChunkZ && cz <= b.maxChunkZ) b.craters += r.sig(Signal.CRATER);
+                b.lavaFlows += r.sig(Signal.LAVA_FLOW);
+                b.portals += r.sig(Signal.NETHER_PORTAL) + r.sig(Signal.PORTAL_FRAME);
+                for (Feature f : BaseScanner.FEATURES)
+                    if (WORKSTATIONS.contains(f.name)) b.workstations += r.blockCounts[f.id];
             }
         // The amethyst clock looks a little further out: geodes are rarely right under a base.
         for (int cx = b.minChunkX - 4; cx <= b.maxChunkX + 4; cx++)
             for (int cz = b.minChunkZ - 4; cz <= b.maxChunkZ + 4; cz++) {
-                ChunkReport r = reports.get(ChunkPos.pack(cx, cz));
+                ChunkReport r = reports.get(key(cx, cz, b.layer));
                 if (r != null) { faces += r.amethystFaces; stageSum += r.amethystStageSum; budding += r.amethystBudding; }
             }
         b.doubleChests /= 2;
@@ -612,37 +696,73 @@ public final class BaseFinderModule extends FeatureModule {
         if (!nearby.isEmpty()) b.notes.add("Overlaps a natural " + String.join(", ", b.nearbyStructures).toLowerCase()
                 + "; its own blocks are ignored");
 
-        scoreUnraided(b);
+        for (String sign : b.signs) if (RAIDER_SIGN.matcher(sign).find() && b.raiderSigns.size() < 3) b.raiderSigns.add(sign);
+        scoreUnraided(b, dim);
         scoreActivity(b);
     }
 
-    private static void scoreUnraided(Base b) {
-        float score = 55;
+    private static final Set<String> WORKSTATIONS = Set.of("crafting table", "furnace", "enchanting table", "anvil", "brewing stand");
+    /** What raiders write on signs they leave behind. */
+    private static final java.util.regex.Pattern RAIDER_SIGN = java.util.regex.Pattern.compile(
+            "\\b(raided|raid(?:ed)? by|griefed|grief(?:ed)? by|rekt|e+z+|gg+|was here|were here|destroyed|bombed|nuked|looted|"
+                    + "cope|seethe|stay mad|l+o+l+|rip|owned|cleaned)\\b", java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /**
+     * Unraided likelihood. Raid damage is weighed first and dominates: a bombed base still has chests
+     * and builds standing, so whatever is still "intact" can never outvote craters, crystals, spilled
+     * loot or raider signs. Without damage it falls back to what is still worth stealing.
+     */
+    private static void scoreUnraided(Base b, Dim dim) {
         List<String> why = b.unraidedWhy;
-        if (b.shulkers > 0) { score += Math.min(25, b.shulkers * 2.5f); why.add("+ " + b.shulkers + " shulker box" + (b.shulkers == 1 ? "" : "es") + " still placed"); }
-        if (b.valuableBlocks > 0) { score += Math.min(15, b.valuableBlocks * 3f); why.add("+ " + b.valuableBlocks + " beacon/valuable block" + (b.valuableBlocks == 1 ? "" : "s") + " intact"); }
-        if (b.framesFull > 0) { score += Math.min(8, b.framesFull); why.add("+ " + b.framesFull + " item frame" + (b.framesFull == 1 ? "" : "s") + " still holding items"); }
-        if (b.standsDressed > 0) { score += Math.min(6, b.standsDressed * 2f); why.add("+ " + b.standsDressed + " armor stand" + (b.standsDressed == 1 ? "" : "s") + " still wearing armor"); }
+        float damage = 0, intact = 0;
+        // ---- damage evidence
+        if (!b.raiderSigns.isEmpty()) { damage += 40; why.add("- Raider sign: \"" + clip(b.raiderSigns.getFirst(), 40) + "\""); }
+        if (b.craters >= 8) { damage += Math.min(20, 6 + b.craters * 0.4f); why.add("- Possible explosion craters in the ground (" + b.craters + " columns)"); }
+        if (b.crystals > 0 && dim != Dim.END) { damage += Math.min(30, 12 + b.crystals * 6f); why.add("- " + b.crystals + " end crystal" + (b.crystals == 1 ? "" : "s") + " placed (crystal bombing)"); }
+        if (b.tnt > 0 || b.tntEntities > 0) { damage += Math.min(30, 10 + (b.tnt + b.tntEntities * 3) * 2f); why.add("- TNT here (" + (b.tnt + b.tntEntities) + ")"); }
+        if (b.withers > 0) { damage += 25; why.add("- Wither or wither skulls in the area"); }
+        if (b.lootDrops > 0) { damage += Math.min(30, 15 + b.lootDrops * 3f); why.add("- " + b.lootDrops + " valuable" + (b.lootDrops == 1 ? "" : "s") + " lying on the ground (spilled loot)"); }
+        if (b.debrisDrops >= 12) { damage += Math.min(20, b.debrisDrops * 0.5f); why.add("- " + b.debrisDrops + " block items scattered (explosion debris)"); }
+        if (b.lavaFlows >= 6) { damage += Math.min(20, b.lavaFlows * 0.4f); why.add("- Lava poured over the area (lava cast)"); }
+        if (b.fire > 0) { damage += Math.min(12, 4 + b.fire * 2f); why.add("- Fire burning"); }
+        if (b.obsidian >= 16 && b.portals == 0) { damage += Math.min(12, b.obsidian * 0.2f); why.add("- " + b.obsidian + " loose obsidian (crystal platforms)"); }
+        if (b.workstations >= 2 && b.storageSlots < 27 && b.shulkers == 0) { damage += 20; why.add("- Workstations left but the storage is gone (stripped)"); }
+        if (b.framesEmpty > 0) { damage += Math.min(15, b.framesEmpty * 3f); why.add("- " + b.framesEmpty + " empty item frame" + (b.framesEmpty == 1 ? "" : "s")); }
+        if (b.standsBare > 0 && b.standsDressed == 0) { damage += Math.min(8, b.standsBare * 2f); why.add("- Armor stands stripped"); }
+        // ---- still worth stealing
+        if (b.shulkers > 0) { intact += Math.min(25, b.shulkers * 3f); why.add("+ " + b.shulkers + " shulker box" + (b.shulkers == 1 ? "" : "es") + " still placed"); }
+        if (b.valuableBlocks > 0) { intact += Math.min(20, b.valuableBlocks * 4f); why.add("+ " + b.valuableBlocks + " beacon/valuable block" + (b.valuableBlocks == 1 ? "" : "s") + " intact"); }
+        if (b.framesFull > 0) { intact += Math.min(10, b.framesFull * 1.5f); why.add("+ " + b.framesFull + " item frame" + (b.framesFull == 1 ? "" : "s") + " still holding items"); }
+        if (b.standsDressed > 0) { intact += Math.min(8, b.standsDressed * 2f); why.add("+ " + b.standsDressed + " armor stand" + (b.standsDressed == 1 ? "" : "s") + " still wearing armor"); }
         int keepsakes = b.lecternBooks + b.jukeboxDiscs + b.brewingBottles;
-        if (keepsakes > 0) { score += Math.min(6, keepsakes * 1.5f); why.add("+ Books, discs or potions left in place"); }
-        if (b.framesEmpty > 0) { score -= Math.min(15, b.framesEmpty * 2f); why.add("- " + b.framesEmpty + " empty item frame" + (b.framesEmpty == 1 ? "" : "s")); }
-        if (b.standsBare > 0 && b.standsDressed == 0) { score -= Math.min(6, b.standsBare * 2f); why.add("- Armor stands stripped"); }
-        if (b.tnt > 0) { score -= Math.min(20, b.tnt * 2f); why.add("- " + b.tnt + " TNT present"); }
-        if (b.fire > 0) { score -= Math.min(10, b.fire * 2f); why.add("- Fire burning"); }
-        if (b.drops >= 40) { score -= 15; why.add("- " + b.drops + " items dumped on the ground"); }
-        if (b.storageSlots >= 270 && b.shulkers == 0 && b.valuableBlocks == 0) { score -= 5; why.add("- Lots of storage but no shulkers or valuables visible"); }
-        if (Math.abs(b.x) > 50_000 || Math.abs(b.z) > 50_000) { score += 5; why.add("+ Far from spawn"); }
-        if (b.y < 20) { score += 3; why.add("+ Built underground"); }
+        if (keepsakes > 0) { intact += Math.min(6, keepsakes * 1.5f); why.add("+ Books, discs or potions left in place"); }
+        if (b.storageSlots >= 270 && damage < 15) { intact += 8; why.add("+ " + b.storageSlots + " storage slots still standing"); }
+        if (Math.abs(b.x) > 50_000 || Math.abs(b.z) > 50_000) { intact += 5; why.add("+ Far from spawn"); }
+        if (b.y < 20) { intact += 3; why.add("+ Built underground"); }
+
+        float score = 50 + intact - damage * 1.3f;
+        if (damage >= 30) score = Math.min(score, 20);         // clear raid evidence outweighs anything still standing
+        else if (damage >= 15) score = Math.min(score, 45);
         b.unraided = Math.round(Math.max(3, Math.min(97, score)));
+        b.raidDamage = Math.round(damage);
+        b.raidLabel = damage >= 50 ? "Bombed" : damage >= 30 ? "Raided" : damage >= 15 ? "Possibly raided"
+                : b.unraided >= 70 ? "Looks intact" : "No raid signs";
     }
+
+    private static String clip(String s, int n) { return s.length() <= n ? s : s.substring(0, n - 1) + "\u2026"; }
 
     private static void scoreActivity(Base b) {
         float score = 30;
         List<String> why = b.activityWhy;
-        if (!b.playersHere.isEmpty()) { score += 70; why.add("Players here now: " + String.join(", ", b.playersHere)); }
+        if (!b.playersHere.isEmpty()) {
+            score += 70;
+            why.add((b.raidDamage >= 30 ? "Players here now (raiders?): " : "Players here now: ") + String.join(", ", b.playersHere));
+        }
         if (b.litFurnaces > 0) { score += 35; why.add(b.litFurnaces + " furnace" + (b.litFurnaces == 1 ? " is" : "s are") + " burning (used within minutes)"); }
-        if (b.drops > 0) { score += 20; why.add(b.drops + " dropped item" + (b.drops == 1 ? "" : "s") + " (they vanish after 5 loaded minutes)"); }
-        if (b.xpOrbs > 0) { score += 10; why.add("XP orbs on the ground"); }
+        boolean debris = b.lootDrops > 0 || b.debrisDrops >= 12;
+        if (debris) why.add(b.drops + " items on the ground look like raid debris, not someone living here");
+        else if (b.drops > 0) { score += 20; why.add(b.drops + " dropped item" + (b.drops == 1 ? "" : "s") + " (they vanish after 5 loaded minutes)"); }
+        if (b.xpOrbs > 0 && !debris) { score += 10; why.add("XP orbs on the ground"); }
         if (b.poweredRedstone > 4) { score += 10; why.add("Redstone machines running"); }
         if (b.litCandles > 0) { score += 5; why.add("Candles lit"); }
         if (b.crops >= 16) {
@@ -662,7 +782,7 @@ public final class BaseFinderModule extends FeatureModule {
         if (b.respawnAnchors > 0 || b.beds > 0) why.add((b.beds > 0 ? b.beds + " bed" + (b.beds == 1 ? "" : "s") : "")
                 + (b.beds > 0 && b.respawnAnchors > 0 ? ", " : "") + (b.respawnAnchors > 0 ? "charged respawn anchor" : "") + " (spawn points)");
         b.activity = Math.round(Math.max(0, Math.min(100, score)));
-        b.activityLabel = activityLabel(b.activity);
+        b.activityLabel = activityLabel(b);
         if (why.isEmpty()) why.add("No live signals; status is a guess");
     }
 
@@ -677,8 +797,10 @@ public final class BaseFinderModule extends FeatureModule {
         Map<Structure, List<ChunkReport>> byType = new java.util.EnumMap<>(Structure.class);
         for (ChunkReport r : reports.values()) for (Structure st : r.structures) byType.computeIfAbsent(st, k -> new ArrayList<>()).add(r);
         List<Poi> out = new ArrayList<>();
-        for (Map.Entry<Structure, List<ChunkReport>> entry : byType.entrySet()) {
+        for (Map.Entry<Structure, List<ChunkReport>> entry : byType.entrySet()) for (int layer = 0; layer < 2; layer++) {
+            final int l = layer;
             List<ChunkReport> pool = new ArrayList<>(entry.getValue());
+            pool.removeIf(r -> r.layer != l);
             while (!pool.isEmpty()) {
                 // group chunks of the same structure type that touch (within 3 chunks)
                 List<ChunkReport> group = new ArrayList<>();
@@ -700,6 +822,7 @@ public final class BaseFinderModule extends FeatureModule {
 
     private Poi poi(Structure st, List<ChunkReport> group) {
         Poi p = new Poi();
+        p.layer = group.getFirst().layer;
         p.type = pretty(st);
         long sx = 0, sz = 0;
         int eyes = 0, frames = 0, endPortal = 0, elytra = 0, villagers = 0, spawners = 0, chestsHere = 0, playerScore = 0;
@@ -712,7 +835,8 @@ public final class BaseFinderModule extends FeatureModule {
             playerScore += r.sig(Signal.SHULKER) * 10 + r.sig(Signal.HOPPER) * 2 + r.sig(Signal.LIT_FURNACE) * 5 + r.sig(Signal.NETHER_PORTAL);
         }
         p.x = (int) (sx / group.size()); p.z = (int) (sz / group.size());
-        p.y = level == null ? 64 : level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE, p.x, p.z);
+        p.y = p.layer == BaseScanner.DEEP ? -40
+                : level == null ? 64 : level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE, p.x, p.z);
         p.color = 0xFFB0B8D0;
         switch (st) {
             case STRONGHOLD -> {
@@ -742,7 +866,7 @@ public final class BaseFinderModule extends FeatureModule {
     // ------------------------------------------------------------------ focus and tracking
     /** Pinned base if still present, otherwise the base closest to the crosshair (within 25 degrees), otherwise the nearest. */
     public Base focused(Minecraft mc) {
-        List<Base> list = bases;
+        List<Base> list = bases();
         if (list.isEmpty() || mc.player == null) return null;
         if (trackedX != Integer.MIN_VALUE) {
             for (Base b : list) {
@@ -773,7 +897,12 @@ public final class BaseFinderModule extends FeatureModule {
         trackedZ = b.z;
     }
 
-    public List<Poi> pois() { return pois; }
+    public List<Poi> pois() {
+        int layer = playerLayer();
+        List<Poi> view = new ArrayList<>();
+        for (Poi p : pois) if (p.layer == layer) view.add(p);
+        return view;
+    }
     public boolean showIntelCard() { return isEnabled() && hudIntel.get(); }
     public boolean showPinnedCards() { return isEnabled() && labels.get(); }
     public String cardSize() { return cardSize.get(); }
@@ -840,21 +969,38 @@ public final class BaseFinderModule extends FeatureModule {
     }
 
     private void copyBest() {
-        List<Base> list = bases;
-        if (list.isEmpty()) { Notifications.warn("Base Finder", "Nothing found yet"); return; }
+        List<Base> list = bases();
+        if (list.isEmpty()) { Notifications.warn("Base Finder", "Nothing found in this layer yet"); return; }
         Base b = list.getFirst();
         Minecraft.getInstance().keyboardHandler.setClipboard(b.x + " " + b.y + " " + b.z);
         Notifications.success("Base Finder", "Copied " + b.type + " at " + b.x + " " + b.y + " " + b.z);
     }
 
     // ------------------------------------------------------------------ public views
-    public List<Base> bases() { return bases; }
+    /** Bases in the layer the player is in (deepslate below y=0, surface above). */
+    public List<Base> bases() {
+        List<Base> all = bases;
+        int layer = playerLayer();
+        Object[] cached = layerView.get();
+        if (cached != null && cached[0] == all && (int) cached[1] == layer) {
+            @SuppressWarnings("unchecked") List<Base> v = (List<Base>) cached[2];
+            return v;
+        }
+        List<Base> view = new ArrayList<>();
+        for (Base b : all) if (b.layer == layer) view.add(b);
+        view = List.copyOf(view);
+        layerView.set(new Object[]{all, layer, view});
+        return view;
+    }
+
+    /** Human-readable name of the layer currently shown. */
+    public String layerName() { return playerLayer() == BaseScanner.DEEP ? "Deepslate (below y 0)" : "Surface (y 0 and up)"; }
     public boolean showHud() { return isEnabled() && hudList.get(); }
     public int queued() { return queue.size(); }
     public int scanned() { return scannedTotal; }
 
     @Override public String hudInfo() {
-        List<Base> list = bases;
+        List<Base> list = bases();
         return list.isEmpty() ? (queue.isEmpty() ? "0" : "Scanning") : Integer.toString(list.size());
     }
 
@@ -862,8 +1008,8 @@ public final class BaseFinderModule extends FeatureModule {
     public static void renderGizmos(LevelRenderer renderer) {
         BaseFinderModule m = INSTANCE;
         Minecraft mc = Minecraft.getInstance();
-        List<Base> list = m.bases;
-        if (!m.isEnabled() || list.isEmpty() || mc.player == null || mc.level == null) return;
+        List<Base> list = m.bases();
+        if (!m.isEnabled() || mc.player == null || mc.level == null) return;
         float partial = mc.getDeltaTracker().getGameTimeDeltaPartialTick(true);
         Vec3 eye = mc.player.getEyePosition(partial);
         Vec3 look = mc.player.getViewVector(partial);
@@ -910,7 +1056,7 @@ public final class BaseFinderModule extends FeatureModule {
         if (m.structures.get()) {
             try (var ignored = Gizmos.withCollector(collector)) {
                 int labelled = 0;
-                for (Poi p : m.pois) {   // sorted nearest first
+                for (Poi p : m.pois()) {   // sorted nearest first
                     Vec3 base = new Vec3(p.x + .5, p.y, p.z + .5);
                     if (eye.distanceToSqr(base) > 400 * 400) continue;
                     Gizmos.line(base, base.add(0, 48, 0), 0x90000000 | (p.color & 0xFFFFFF), 2f).setAlwaysOnTop();

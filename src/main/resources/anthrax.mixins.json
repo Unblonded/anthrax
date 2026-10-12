@@ -33,6 +33,9 @@
     "KeyboardInputMixin",
     "EntityTurnMixin",
     "MouseScrollMixin",
+    "MouseButtonMixin",
+    "CombatHooksMixin",
+    "VelocityMixin",
     "NametagHideMixin",
     "LivingNametagHideMixin"
   ]

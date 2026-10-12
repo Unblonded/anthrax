@@ -12,6 +12,6 @@ import unblonded.anthrax.modules.visual.ZoomModule;
 public abstract class MouseScrollMixin {
     @Inject(method = "onScroll", at = @At("HEAD"), cancellable = true)
     private void anthrax$zoomScroll(long window, double xOffset, double yOffset, CallbackInfo ci) {
-        if (yOffset != 0 && ZoomModule.INSTANCE.onScroll(yOffset)) ci.cancel();
+        if (yOffset != 0 && (ZoomModule.INSTANCE.onScroll(yOffset) || unblonded.anthrax.modules.visual.FreecamModule.INSTANCE.onScroll(yOffset))) ci.cancel();
     }
 }

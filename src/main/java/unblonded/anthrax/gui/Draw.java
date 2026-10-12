@@ -371,6 +371,17 @@ final class Draw {
         round(g, x + (d - hw) / 2, y + Math.max(1, Math.round(d * 0.08f)), hw, hh, hh / 2, 0x4CFFFFFF);
     }
 
+    /** The Anthrax logo: a glossy gradient squircle tile with the spore "A" mark, at any size, anti-aliased. */
+    static void logo(GuiGraphicsExtractor g, int x, int y, int d, int c1, int c2) {
+        if (d <= 0) return;
+        Shapes.blit(g, Shapes.logoTile(d), x, y, d, d, 0, 0, d, d, d, d, c1);
+        Shapes.blit(g, Shapes.logoSheen(d), x, y, d, d, 0, 0, d, d, d, d, c2);
+        Shapes.blit(g, Shapes.logoGloss(d), x, y, d, d, 0, 0, d, d, d, d, 0xFFFFFFFF);
+        // a soft drop under the mark keeps it legible on light accents
+        Shapes.blit(g, Shapes.logoMark(d), x, y + Math.max(1, d / 28), d, d, 0, 0, d, d, d, d, 0x40000000);
+        Shapes.blit(g, Shapes.logoMark(d), x, y, d, d, 0, 0, d, d, d, d, 0xFFFFFFFF);
+    }
+
     /** Glass pane tinted with a color (selected items, active states). */
     static void glassTint(GuiGraphicsExtractor g, int x, int y, int w, int h, int r, int color, float strength) {
         glass(g, x, y, w, h, r, alpha(color, Math.round(0x30 + 0x40 * strength)), 0.6f + 0.4f * strength);
