@@ -1013,8 +1013,7 @@ public class AnthraxScreen extends Screen {
             else if (b == 0) {
                 m.toggle();
                 activeStamp = -1000L;
-                if (m.isEnabled()) Notifications.success(m.name, "Enabled");
-                else Notifications.info(m.name, "Disabled");
+                unblonded.anthrax.modules.client.ClientSettingsModule.toggled(m.name, m.isEnabled());
             }
         }, null);
         if (!moduleSettings.isEmpty()) {
@@ -1660,8 +1659,7 @@ public class AnthraxScreen extends Screen {
                 if (!results.isEmpty()) {
                     GuiModule top = results.getFirst();
                     top.toggle();
-                    if (top.isEnabled()) Notifications.success(top.name, "Enabled");
-                    else Notifications.info(top.name, "Disabled");
+                    unblonded.anthrax.modules.client.ClientSettingsModule.toggled(top.name, top.isEnabled());
                 }
                 return true;
             }
@@ -1672,7 +1670,8 @@ public class AnthraxScreen extends Screen {
             scrollTarget = 0;
             return true;
         }
-        if (!searchFocused && Anthrax.guiKey != null && Anthrax.guiKey.matches(event)) {
+        Setting.Key menuKey = unblonded.anthrax.modules.client.ClientSettingsModule.INSTANCE.menuKey();
+        if (!searchFocused && menuKey.bound() && key == menuKey.get()) {
             onClose();
             return true;
         }
@@ -1797,6 +1796,7 @@ public class AnthraxScreen extends Screen {
             case "Chat Filter" -> new ItemStack(Items.PAPER);
             case "Storage Scan" -> new ItemStack(Items.CHEST);
             case "New Chunks" -> new ItemStack(Items.GRASS_BLOCK);
+            case "Client Settings" -> new ItemStack(Items.COMPARATOR);
             default -> ItemStack.EMPTY;
         };
     }

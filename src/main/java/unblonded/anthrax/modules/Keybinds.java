@@ -18,9 +18,14 @@ public final class Keybinds {
         for (GuiModule module : ModuleRegistry.all()) {
             if (module.key() != key) continue;
             module.toggle();
-            if (module.isEnabled()) Notifications.success(module.name, "Enabled");
-            else Notifications.info(module.name, "Disabled");
+            unblonded.anthrax.modules.client.ClientSettingsModule.toggled(module.name, module.isEnabled());
         }
+        // never lock anyone out of the menu: with its key cleared, Right Shift still opens it
+        Setting.Key open = unblonded.anthrax.modules.client.ClientSettingsModule.INSTANCE.menuKey();
+        if (!open.bound() && key == GLFW.GLFW_KEY_RIGHT_SHIFT) { open.press(); return; }
+        // the sub module menu wins over other action binds on the same key (it lists those screens anyway)
+        Setting.Key menu = unblonded.anthrax.modules.client.ClientSettingsModule.INSTANCE.subMenuKey();
+        if (menu.bound() && menu.get() == key) { menu.press(); return; }
         // action binds set inside module settings (open a screen and the like); these work with the module off too
         for (GuiModule module : ModuleRegistry.all())
             for (Setting setting : module.settings())

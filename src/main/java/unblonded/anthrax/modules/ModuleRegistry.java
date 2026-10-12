@@ -107,6 +107,7 @@ public final class ModuleRegistry {
         addFeature(unblonded.anthrax.modules.client.FriendsModule.INSTANCE);
         addFeature(unblonded.anthrax.modules.client.CommandsModule.INSTANCE);
         addFeature(unblonded.anthrax.modules.client.ProfilesModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.client.ClientSettingsModule.INSTANCE);
         addFeature(FontSizeModule.INSTANCE);
     }
 

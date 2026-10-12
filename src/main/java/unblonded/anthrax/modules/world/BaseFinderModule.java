@@ -130,7 +130,7 @@ public final class BaseFinderModule extends FeatureModule {
 
     // ---- detection
     // Intel screen bind: lives in the module settings (bind chip), works while the module is off too.
-    private final Setting.Key intelKey = setting(Setting.Key.standalone("Intel screen key", org.lwjgl.glfw.GLFW.GLFW_KEY_B,
+    private final Setting.Key intelKey = setting(Setting.Key.standalone("Intel screen key", Setting.Key.NONE,
             () -> Minecraft.getInstance().gui.setScreen(new unblonded.anthrax.gui.IntelScreen())),
             "Opens Base Intel (bases, structures and the map). Press it again to close.");
     private final Setting.Mode sensitivity = setting(Setting.Mode.standalone("Sensitivity", "Balanced", "Low", "Balanced", "High", "Paranoid"), "How readily a chunk counts as player activity. Higher finds more but also more false finds.");

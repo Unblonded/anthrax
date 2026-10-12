@@ -14,9 +14,6 @@ import unblonded.anthrax.modules.ModuleConfig;
 import unblonded.anthrax.modules.combat.TotemPops;
 
 public class Anthrax implements ClientModInitializer {
-    /** Opens (and, from inside the menu, closes) the Anthrax menu. Rebindable in Controls. */
-    public static KeyMapping guiKey;
-    /** Opens the Base Intel screen. */
     /** Hold to zoom. */
     public static KeyMapping zoomKey;
 
@@ -27,12 +24,6 @@ public class Anthrax implements ClientModInitializer {
         ModuleConfig.load();
         Hud.register();
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> ModuleConfig.saveNow());
-        guiKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
-                "key.anthrax.gui",
-                GLFW.GLFW_KEY_RIGHT_SHIFT,
-                KeyMapping.Category.MISC
-        ));
-
         zoomKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.anthrax.zoom",
                 GLFW.GLFW_KEY_C,
@@ -44,9 +35,6 @@ public class Anthrax implements ClientModInitializer {
             ModuleConfig.tick();
             TotemPops.tick(client);
             FeatureManager.tick(client);
-            if (guiKey.consumeClick() && client.gui.screen() == null) {
-                client.gui.setScreen(new AnthraxScreen());
-            }
         });
     }
 }

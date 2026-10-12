@@ -89,6 +89,14 @@ public final class GuiPreferences {
         values.put("gui.openCards", String.join("|", openCards));
     }
 
+    /** Forgets every window position and size, collapsed state and HUD block position. */
+    public static void resetLayout() {
+        windowPositions.clear();
+        windowSizes.clear();
+        collapsed.clear();
+        windowOrder.clear();
+    }
+
     public static boolean onboarded() { return onboarded; }
     public static void setOnboarded(boolean value) { onboarded = value; }
     public static String lastCategory() { return lastCategory; }
