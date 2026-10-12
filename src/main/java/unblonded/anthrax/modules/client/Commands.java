@@ -1,9 +1,21 @@
 package unblonded.anthrax.modules.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.StringReader;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import com.mojang.brigadier.builder.RequiredArgumentBuilder;
+import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.mojang.brigadier.suggestion.SuggestionProvider;
+import com.mojang.brigadier.tree.LiteralCommandNode;
 import net.fabricmc.fabric.api.client.message.v1.ClientSendMessageEvents;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientSuggestionProvider;
+import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import unblonded.anthrax.modules.GuiModule;
@@ -13,24 +25,37 @@ import unblonded.anthrax.modules.ModuleRegistry;
 import unblonded.anthrax.modules.Setting;
 import unblonded.anthrax.modules.world.WaypointsModule;
 
-import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
 /**
  * Chat commands with a configurable prefix (default "."). They never reach the server.
- * Module names may contain spaces; they are matched ignoring case and spaces.
+ * Built on a Brigadier dispatcher so the chat box can suggest and highlight them (see CommandSuggestionsMixin).
+ * Module and setting names may contain spaces; they are matched ignoring case and spaces, and suggested
+ * without spaces ("AimAssist").
  */
 public final class Commands {
     private Commands() {}
 
+    public static final CommandDispatcher<ClientSuggestionProvider> DISPATCHER = new CommandDispatcher<>();
+
+    public static String prefix() { return CommandsModule.INSTANCE.prefix(); }
+
     public static void register() {
+        build();
         ClientSendMessageEvents.ALLOW_CHAT.register(message -> {
-            String prefix = CommandsModule.INSTANCE.prefix();
+            String prefix = prefix();
             if (prefix.isEmpty() || !message.startsWith(prefix)) return true;
-            Minecraft.getInstance().gui.hud.getChat().addRecentChat(message);
+            Minecraft mc = Minecraft.getInstance();
+            mc.gui.hud.getChat().addRecentChat(message);
+            String line = message.substring(prefix.length()).trim();
+            if (line.isEmpty()) { help(); return false; }
+            if (mc.player == null) return false;
             try {
-                run(message.substring(prefix.length()).trim());
+                DISPATCHER.execute(new StringReader(line), mc.player.connection.getSuggestionsProvider());
+            } catch (CommandSyntaxException e) {
+                error(e.getRawMessage().getString() + (e.getCursor() >= 0 ? " at: " + line.substring(0, Math.min(e.getCursor(), line.length())) + "<--" : ""));
             } catch (RuntimeException e) {
                 error("Command failed: " + e.getMessage());
             }
@@ -38,57 +63,161 @@ public final class Commands {
         });
     }
 
-    private static void run(String line) {
-        if (line.isEmpty()) { help(); return; }
-        String[] args = line.split("\\s+");
-        String cmd = args[0].toLowerCase(Locale.ROOT);
-        String[] rest = Arrays.copyOfRange(args, 1, args.length);
-        switch (cmd) {
-            case "help", "?" -> help();
-            case "t", "toggle" -> toggle(rest);
-            case "bind" -> bind(rest);
-            case "set" -> set(rest);
-            case "reset" -> reset(rest);
-            case "modules", "list" -> modules();
-            case "friend", "friends", "f" -> friend(rest);
-            case "wp", "waypoint", "waypoints" -> waypoint(rest);
-            case "profile", "config", "cfg" -> profile(rest);
-            case "panic" -> panic();
-            case "coords" -> coords();
-            case "prefix" -> prefix(rest);
-            default -> error("Unknown command \"" + cmd + "\". Try " + CommandsModule.INSTANCE.prefix() + "help");
-        }
+    // ------------------------------------------------------------------ tree
+    private static LiteralArgumentBuilder<ClientSuggestionProvider> lit(String name) { return LiteralArgumentBuilder.literal(name); }
+    private static <T> RequiredArgumentBuilder<ClientSuggestionProvider, T> arg(String name, com.mojang.brigadier.arguments.ArgumentType<T> type) {
+        return RequiredArgumentBuilder.argument(name, type);
+    }
+    private static String str(CommandContext<ClientSuggestionProvider> c, String name) { return StringArgumentType.getString(c, name); }
+
+    private interface Run { void run(CommandContext<ClientSuggestionProvider> c); }
+    private static com.mojang.brigadier.Command<ClientSuggestionProvider> does(Run r) { return c -> { r.run(c); return 1; }; }
+
+    private static void alias(String name, LiteralCommandNode<ClientSuggestionProvider> target) {
+        DISPATCHER.register(lit(name).executes(target.getCommand()).redirect(target));
+    }
+
+    private static final SuggestionProvider<ClientSuggestionProvider> MODULES = (c, b) -> {
+        List<String> names = new ArrayList<>();
+        for (GuiModule m : ModuleRegistry.all()) names.add(compact(m.name));
+        return SharedSuggestionProvider.suggest(names, b);
+    };
+    private static final SuggestionProvider<ClientSuggestionProvider> SETTINGS = (c, b) -> {
+        GuiModule m = find(str(c, "module"));
+        List<String> names = new ArrayList<>();
+        if (m != null) for (Setting s : m.settings()) names.add(compact(s.name));
+        return SharedSuggestionProvider.suggest(names, b);
+    };
+    private static final SuggestionProvider<ClientSuggestionProvider> VALUES = (c, b) -> {
+        Setting s = setting(find(str(c, "module")), str(c, "setting"));
+        List<String> values = new ArrayList<>();
+        if (s instanceof Setting.Bool) values.addAll(List.of("true", "false", "toggle"));
+        else if (s instanceof Setting.Mode md) values.addAll(md.options);
+        else if (s instanceof Setting.Num n) values.add(trimNum(n.get()));
+        else if (s instanceof Setting.Text t && !t.get().isEmpty()) values.add(t.get());
+        else if (s instanceof Setting.Action) values.add("run");
+        return SharedSuggestionProvider.suggest(values, b);
+    };
+    private static final SuggestionProvider<ClientSuggestionProvider> KEYS = (c, b) -> {
+        List<String> keys = new ArrayList<>(List.of("none", "middle", "mb4", "mb5", "lshift", "rshift", "lctrl", "rctrl",
+                "lalt", "ralt", "space", "tab", "caps.lock", "grave.accent", "insert", "delete", "home", "end", "page.up", "page.down"));
+        for (char ch = 'a'; ch <= 'z'; ch++) keys.add(String.valueOf(ch));
+        for (char ch = '0'; ch <= '9'; ch++) keys.add(String.valueOf(ch));
+        for (int i = 1; i <= 12; i++) keys.add("f" + i);
+        return SharedSuggestionProvider.suggest(keys, b);
+    };
+    private static final SuggestionProvider<ClientSuggestionProvider> PLAYERS =
+            (c, b) -> SharedSuggestionProvider.suggest(c.getSource().getOnlinePlayerNames(), b);
+    private static final SuggestionProvider<ClientSuggestionProvider> FRIENDS =
+            (c, b) -> SharedSuggestionProvider.suggest(FriendsModule.names(), b);
+    private static final SuggestionProvider<ClientSuggestionProvider> WAYPOINTS = (c, b) -> {
+        List<String> names = new ArrayList<>();
+        for (var w : WaypointsModule.INSTANCE.here()) names.add(w.name);
+        return SharedSuggestionProvider.suggest(names, b);
+    };
+    private static final SuggestionProvider<ClientSuggestionProvider> PROFILES =
+            (c, b) -> SharedSuggestionProvider.suggest(ModuleConfig.profiles(), b);
+    private static final SuggestionProvider<ClientSuggestionProvider> SITES =
+            (c, b) -> SharedSuggestionProvider.suggest(List.of(TestStructures.names().split(", ")), b);
+
+    private static void build() {
+        DISPATCHER.register(lit("help").executes(does(c -> help())));
+        alias("?", DISPATCHER.register(lit("commands").executes(does(c -> help()))));
+
+        LiteralCommandNode<ClientSuggestionProvider> toggle = DISPATCHER.register(lit("toggle")
+                .then(arg("module", StringArgumentType.greedyString()).suggests(MODULES).executes(does(c -> toggle(str(c, "module"))))));
+        alias("t", toggle);
+
+        DISPATCHER.register(lit("bind")
+                .then(arg("module", StringArgumentType.word()).suggests(MODULES)
+                        .then(arg("key", StringArgumentType.word()).suggests(KEYS)
+                                .executes(does(c -> bind(str(c, "module"), str(c, "key")))))));
+
+        DISPATCHER.register(lit("set")
+                .then(arg("module", StringArgumentType.word()).suggests(MODULES)
+                        .then(arg("setting", StringArgumentType.word()).suggests(SETTINGS)
+                                .then(arg("value", StringArgumentType.greedyString()).suggests(VALUES)
+                                        .executes(does(c -> set(str(c, "module"), str(c, "setting"), str(c, "value"))))))));
+
+        DISPATCHER.register(lit("reset")
+                .then(arg("module", StringArgumentType.greedyString()).suggests(MODULES).executes(does(c -> reset(str(c, "module"))))));
+
+        alias("list", DISPATCHER.register(lit("modules").executes(does(c -> modules()))));
+
+        LiteralCommandNode<ClientSuggestionProvider> friend = DISPATCHER.register(lit("friend")
+                .executes(does(c -> friendList()))
+                .then(lit("add").then(arg("name", StringArgumentType.word()).suggests(PLAYERS)
+                        .executes(does(c -> { String n = str(c, "name"); info(FriendsModule.add(n) ? "Added " + n : n + " is already a friend"); }))))
+                .then(lit("del").then(arg("name", StringArgumentType.word()).suggests(FRIENDS)
+                        .executes(does(c -> { String n = str(c, "name"); info(FriendsModule.remove(n) ? "Removed " + n : n + " is not a friend"); }))))
+                .then(lit("list").executes(does(c -> friendList())))
+                .then(lit("clear").executes(does(c -> { for (String n : List.copyOf(FriendsModule.names())) FriendsModule.remove(n); info("Friends cleared"); }))));
+        alias("friends", friend);
+        alias("f", friend);
+
+        LiteralCommandNode<ClientSuggestionProvider> wp = DISPATCHER.register(lit("wp")
+                .executes(does(c -> waypointList()))
+                .then(lit("add").then(arg("name", StringArgumentType.word())
+                        .executes(does(c -> WaypointsModule.INSTANCE.addHere(str(c, "name"))))
+                        .then(arg("x", IntegerArgumentType.integer()).then(arg("y", IntegerArgumentType.integer()).then(arg("z", IntegerArgumentType.integer())
+                                .executes(does(c -> WaypointsModule.INSTANCE.add(str(c, "name"), IntegerArgumentType.getInteger(c, "x"),
+                                        IntegerArgumentType.getInteger(c, "y"), IntegerArgumentType.getInteger(c, "z")))))))))
+                .then(lit("del").then(arg("name", StringArgumentType.word()).suggests(WAYPOINTS)
+                        .executes(does(c -> { String n = str(c, "name"); info(WaypointsModule.INSTANCE.remove(n) ? "Removed " + n : "No waypoint " + n); }))))
+                .then(lit("list").executes(does(c -> waypointList())))
+                .then(lit("clear").executes(does(c -> { WaypointsModule.INSTANCE.clearHere(); info("Waypoints in this dimension cleared"); }))));
+        alias("waypoint", wp);
+        alias("waypoints", wp);
+
+        LiteralCommandNode<ClientSuggestionProvider> profile = DISPATCHER.register(lit("profile")
+                .executes(does(c -> profileList()))
+                .then(lit("save").executes(does(c -> profileSave("default")))
+                        .then(arg("name", StringArgumentType.greedyString()).suggests(PROFILES).executes(does(c -> profileSave(str(c, "name"))))))
+                .then(lit("load").then(arg("name", StringArgumentType.greedyString()).suggests(PROFILES)
+                        .executes(does(c -> { String n = str(c, "name"); if (ModuleConfig.loadProfile(n)) info("Loaded profile " + n); else error("No profile " + n); }))))
+                .then(lit("del").then(arg("name", StringArgumentType.greedyString()).suggests(PROFILES)
+                        .executes(does(c -> { String n = str(c, "name"); info(ModuleConfig.deleteProfile(n) ? "Deleted " + n : "No profile " + n); }))))
+                .then(lit("list").executes(does(c -> profileList()))));
+        alias("config", profile);
+        alias("cfg", profile);
+
+        DISPATCHER.register(lit("panic").executes(does(c -> panic())));
+        DISPATCHER.register(lit("coords").executes(does(c -> coords())));
+        DISPATCHER.register(lit("prefix").then(arg("symbol", StringArgumentType.word()).executes(does(c -> prefix(str(c, "symbol"))))));
+
+        LiteralCommandNode<ClientSuggestionProvider> testbuild = DISPATCHER.register(lit("testbuild")
+                .then(arg("site", StringArgumentType.word()).suggests(SITES).executes(does(c -> testBuild(str(c, "site"))))));
+        alias("tb", testbuild);
     }
 
     // ------------------------------------------------------------------ commands
     private static void help() {
         String p = CommandsModule.INSTANCE.prefix();
-        info("Commands:");
+        info("Commands (Tab completes):");
         line(p + "toggle <module>", "turn a module on or off");
         line(p + "bind <module> <key|none>", "set a toggle key");
         line(p + "set <module> <setting> <value>", "change a setting");
         line(p + "reset <module>", "restore a module's defaults");
-        line(p + "friend add|del|list [name]", "manage friends");
+        line(p + "friend add|del|list|clear [name]", "manage friends");
         line(p + "wp add|del|list|clear [name] [x y z]", "manage waypoints");
         line(p + "profile save|load|del|list [name]", "config profiles");
         line(p + "modules", "list modules");
         line(p + "coords", "copy your coordinates");
         line(p + "panic", "disable every module");
         line(p + "prefix <symbol>", "change the command prefix");
+        line(p + "testbuild <" + TestStructures.names().replace(", ", "|") + ">", "singleplayer test sites");
     }
 
-    private static void toggle(String[] a) {
-        GuiModule m = module(String.join(" ", a));
+    private static void toggle(String name) {
+        GuiModule m = module(name);
         if (m == null) return;
         m.toggle();
         info(m.name + (m.isEnabled() ? " enabled" : " disabled"));
     }
 
-    private static void bind(String[] a) {
-        if (a.length < 2) { error("Usage: bind <module> <key|none>"); return; }
-        GuiModule m = module(String.join(" ", Arrays.copyOf(a, a.length - 1)));
+    private static void bind(String name, String key) {
+        GuiModule m = module(name);
         if (m == null) return;
-        String key = a[a.length - 1];
         if (key.equalsIgnoreCase("none") || key.equalsIgnoreCase("clear")) {
             m.setKey(GuiModule.NO_KEY);
             info(m.name + " unbound");
@@ -100,25 +229,14 @@ public final class Commands {
         info(m.name + " bound to " + Keybinds.keyName(code));
     }
 
-    private static void set(String[] a) {
-        if (a.length < 3) { error("Usage: set <module> <setting> <value>"); return; }
-        // Try every split point: the module name and setting name may both contain spaces.
-        for (int split = 1; split < a.length - 1; split++) {
-            GuiModule m = find(String.join(" ", Arrays.copyOfRange(a, 0, split)));
-            if (m == null) continue;
-            for (int valueStart = a.length - 1; valueStart > split; valueStart--) {
-                String settingName = String.join(" ", Arrays.copyOfRange(a, split, valueStart));
-                String value = String.join(" ", Arrays.copyOfRange(a, valueStart, a.length));
-                for (Setting s : m.settings()) {
-                    if (!normalize(s.name).equals(normalize(settingName))) continue;
-                    String result = apply(s, value);
-                    if (result == null) error("Invalid value \"" + value + "\" for " + s.name);
-                    else info(m.name + " > " + s.name + " = " + result);
-                    return;
-                }
-            }
-        }
-        error("No such module/setting. Example: set aim assist range 5");
+    private static void set(String moduleName, String settingName, String value) {
+        GuiModule m = module(moduleName);
+        if (m == null) return;
+        Setting s = setting(m, settingName);
+        if (s == null) { error(m.name + " has no setting \"" + settingName + "\""); return; }
+        String result = apply(s, value);
+        if (result == null) error("Invalid value \"" + value + "\" for " + s.name);
+        else info(m.name + " > " + s.name + " = " + result);
     }
 
     private static String apply(Setting s, String value) {
@@ -140,8 +258,8 @@ public final class Commands {
         return null;
     }
 
-    private static void reset(String[] a) {
-        GuiModule m = module(String.join(" ", a));
+    private static void reset(String name) {
+        GuiModule m = module(name);
         if (m == null) return;
         ModuleConfig.resetModule(m);
         info(m.name + " reset to defaults");
@@ -156,49 +274,23 @@ public final class Commands {
         }
     }
 
-    private static void friend(String[] a) {
-        String sub = a.length == 0 ? "list" : a[0].toLowerCase(Locale.ROOT);
-        switch (sub) {
-            case "add" -> { if (a.length < 2) error("Usage: friend add <name>"); else info(FriendsModule.add(a[1]) ? "Added " + a[1] : a[1] + " is already a friend"); }
-            case "del", "remove", "rm" -> { if (a.length < 2) error("Usage: friend del <name>"); else info(FriendsModule.remove(a[1]) ? "Removed " + a[1] : a[1] + " is not a friend"); }
-            case "clear" -> { for (String n : FriendsModule.names()) FriendsModule.remove(n); info("Friends cleared"); }
-            default -> info(FriendsModule.names().isEmpty() ? "No friends yet (middle-click a player)" : "Friends: " + String.join(", ", FriendsModule.names()));
-        }
+    private static void friendList() {
+        info(FriendsModule.names().isEmpty() ? "No friends yet (middle-click a player)" : "Friends: " + String.join(", ", FriendsModule.names()));
     }
 
-    private static void waypoint(String[] a) {
-        WaypointsModule wp = WaypointsModule.INSTANCE;
-        String sub = a.length == 0 ? "list" : a[0].toLowerCase(Locale.ROOT);
-        switch (sub) {
-            case "add" -> {
-                if (a.length < 2) { error("Usage: wp add <name> [x y z]"); return; }
-                if (a.length >= 5) {
-                    try { wp.add(a[1], Integer.parseInt(a[2]), Integer.parseInt(a[3]), Integer.parseInt(a[4])); }
-                    catch (NumberFormatException e) { error("Coordinates must be whole numbers"); }
-                } else wp.addHere(a[1]);
-            }
-            case "del", "remove", "rm" -> { if (a.length < 2) error("Usage: wp del <name>"); else info(wp.remove(a[1]) ? "Removed " + a[1] : "No waypoint " + a[1]); }
-            case "clear" -> { wp.clearHere(); info("Waypoints in this dimension cleared"); }
-            default -> {
-                var list = wp.here();
-                if (list.isEmpty()) { info("No waypoints in this dimension"); return; }
-                for (var w : list) line(w.name, w.x + " " + w.y + " " + w.z + (w.death ? "  (death)" : ""));
-            }
-        }
+    private static void waypointList() {
+        var list = WaypointsModule.INSTANCE.here();
+        if (list.isEmpty()) { info("No waypoints in this dimension"); return; }
+        for (var w : list) line(w.name, w.x + " " + w.y + " " + w.z + (w.death ? "  (death)" : ""));
     }
 
-    private static void profile(String[] a) {
-        String sub = a.length == 0 ? "list" : a[0].toLowerCase(Locale.ROOT);
-        String name = a.length > 1 ? String.join(" ", Arrays.copyOfRange(a, 1, a.length)) : "default";
-        switch (sub) {
-            case "save" -> { if (ModuleConfig.saveProfile(name)) info("Saved profile " + name); else error("Could not save " + name); }
-            case "load" -> { if (ModuleConfig.loadProfile(name)) info("Loaded profile " + name); else error("No profile " + name); }
-            case "del", "delete", "rm" -> info(ModuleConfig.deleteProfile(name) ? "Deleted " + name : "No profile " + name);
-            default -> {
-                List<String> all = ModuleConfig.profiles();
-                info(all.isEmpty() ? "No saved profiles" : "Profiles: " + String.join(", ", all));
-            }
-        }
+    private static void profileSave(String name) {
+        if (ModuleConfig.saveProfile(name)) info("Saved profile " + name); else error("Could not save " + name);
+    }
+
+    private static void profileList() {
+        List<String> all = ModuleConfig.profiles();
+        info(all.isEmpty() ? "No saved profiles" : "Profiles: " + String.join(", ", all));
     }
 
     private static void panic() {
@@ -219,10 +311,16 @@ public final class Commands {
         info("Copied " + c);
     }
 
-    private static void prefix(String[] a) {
-        if (a.length != 1 || a[0].length() > 3) { error("Usage: prefix <1-3 characters>"); return; }
-        CommandsModule.INSTANCE.setPrefix(a[0]);
-        info("Prefix is now " + a[0]);
+    private static void prefix(String p) {
+        if (p.length() > 3 || p.startsWith("/")) { error("Prefix must be 1-3 characters and not start with /"); return; }
+        CommandsModule.INSTANCE.setPrefix(p);
+        info("Prefix is now " + p);
+    }
+
+    private static void testBuild(String site) {
+        String err = TestStructures.run(site);
+        if (err != null) { error(err); return; }
+        info(site.equalsIgnoreCase("clear") ? "Test sites flattened" : "Building " + site + " around you (waypoints added)");
     }
 
     // ------------------------------------------------------------------ helpers
@@ -234,6 +332,26 @@ public final class Commands {
         for (GuiModule m : ModuleRegistry.all()) if (normalize(m.name).equals(n)) return m;
         for (GuiModule m : ModuleRegistry.all()) if (normalize(m.name).startsWith(n)) return m;
         return null;
+    }
+
+    private static Setting setting(GuiModule m, String name) {
+        if (m == null) return null;
+        String n = normalize(name);
+        for (Setting s : m.settings()) if (normalize(s.name).equals(n)) return s;
+        for (Setting s : m.settings()) if (!n.isEmpty() && normalize(s.name).startsWith(n)) return s;
+        return null;
+    }
+
+    /** "Show Player List" -> "ShowPlayerList": one word, so it fits a word argument and still matches. */
+    private static String compact(String name) {
+        StringBuilder sb = new StringBuilder();
+        for (String part : name.split("[^A-Za-z0-9]+"))
+            if (!part.isEmpty()) sb.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1));
+        return sb.toString();
+    }
+
+    private static String trimNum(double v) {
+        return v == Math.rint(v) ? Long.toString((long) v) : Double.toString(Math.round(v * 1000) / 1000.0);
     }
 
     private static GuiModule module(String name) {

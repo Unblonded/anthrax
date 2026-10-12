@@ -39,6 +39,8 @@ import static unblonded.anthrax.gui.Draw.*;
  */
 public class AnthraxScreen extends Screen {
     private static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("HH:mm:ss");
+    /** Smallest main window and category window, in design units. */
+    private static final int MAIN_MIN_W = 470, MAIN_MIN_H = 300, CAT_MIN_W = 170, CAT_MIN_H = 110;
 
     private interface Drag { void to(int mouseX, int mouseY); }
 
@@ -300,7 +302,10 @@ public class AnthraxScreen extends Screen {
             return;
         }
 
-        int ww = u(600), wh = u(392);
+        // resizable: the size is saved in design units so it survives GUI-scale changes
+        int[] savedSize = GuiPreferences.windowSize("__main");
+        int ww = Math.max(Math.min(u(MAIN_MIN_W), pw), Math.min(pw, savedSize == null ? u(600) : u(savedSize[0])));
+        int wh = Math.max(Math.min(u(MAIN_MIN_H), ph), Math.min(ph, savedSize == null ? u(392) : u(savedSize[1])));
         int maxWX = Math.max(0, pw - ww), maxWY = Math.max(0, ph - wh);
         double[] storedMain = GuiPreferences.windowPosition("__main");
         if (storedMain == null) storedMain = new double[]{.5, .5};
@@ -340,6 +345,17 @@ public class AnthraxScreen extends Screen {
             drawSidebar(g, ix, bodyTop, footTop, sideW, accent, accent2, dt, ms);
             drawContent(g, ix, iw, bodyTop, footTop, sideW, accent, accent2, dt, ms, nowNs);
             drawFooter(g, ix, iw, footTop, footH);
+
+            final int fx0 = wx, fy0 = wy - introOffset, grabW = wx + ww - mx, grabH = wy + wh - my;
+            resizeGrip(g, wx + ww, wy + wh, accent);
+            hit(wx + ww - u(14), wy + wh - u(14), u(14), u(14), false, null, (px, py) -> {
+                int nw = Math.max(Math.min(u(MAIN_MIN_W), pw), Math.min(pw - fx0, px + grabW - fx0));
+                int nh = Math.max(Math.min(u(MAIN_MIN_H), ph), Math.min(ph - fy0, py + grabH - fy0));
+                GuiPreferences.setWindowSize("__main", Math.round(nw / (float) S), Math.round(nh / (float) S));
+                // keep the top-left corner where it is while the size changes
+                int mxw = Math.max(0, pw - nw), mxh = Math.max(0, ph - nh);
+                GuiPreferences.setWindowPosition("__main", mxw == 0 ? 0 : fx0 / (double) mxw, mxh == 0 ? 0 : fy0 / (double) mxh);
+            });
         } finally {
             g.pose().popMatrix();
         }
@@ -408,15 +424,18 @@ public class AnthraxScreen extends Screen {
         text(g, tx, cy + u(8), "Liquid client", Theme.MUTED, false);
 
         int fpsCol = fps >= 60 ? Theme.OK : fps >= 30 ? 0xFFFFC94A : Theme.DANGER;
-        drawSearch(g, ix + u(166), cy, u(170), accent);
-        chip(g, ix + u(344), cy, u(60), fpsText, fpsCol);
-
         int bh = u(26);
         int closeX = ix + iw - u(16) - bh;
         int themeW = u(84);
         int themeX = closeX - u(8) - themeW;
         int fxW = u(46);
         int fxX = themeX - u(6) - fxW;
+        // the search box shrinks and the FPS chip hides as the window gets narrower
+        int space = fxX - u(10) - (ix + u(166));
+        boolean showChip = space >= u(170 + 68);
+        int searchW = Math.max(u(90), Math.min(u(170), space - (showChip ? u(68) : 0)));
+        drawSearch(g, ix + u(166), cy, searchW, accent);
+        if (showChip) chip(g, ix + u(166) + searchW + u(8), cy, u(60), fpsText, fpsCol);
 
         button(g, fxX, cy - bh / 2, fxW, bh, FX_NAMES[FX], accent, () -> {
             Draw.setFx(Draw.FX + 1);
@@ -637,57 +656,92 @@ public class AnthraxScreen extends Screen {
 
     private void drawDetachedWindows(GuiGraphicsExtractor g, int pw, int ph, float dt, long ms, long nowNs,
                                      float open, int accent, int accent2) {
-        int barH = u(36), barW = u(320), barX = (pw - barW) / 2, barY = u(12);
+        int barH = u(36), barW = u(470), barX = (pw - barW) / 2, barY = u(12);
         shadow(g, barX, barY, barW, barH, barH / 2, u(10), 0x50);
         glass(g, barX, barY, barW, barH, barH / 2, alpha(0x0E1119, 0xB4), 1f);
         icon(g, barX + u(18), barY + barH / 2, Icons.TABLE_COLUMNS, accent);
         text(g, barX + u(32), barY + barH / 2, "Category windows", Theme.TEXT, true);
-        button(g, barX + barW - u(118), barY + u(6), u(108), barH - u(12), "Tabbed view", accent,
+        int bh = barH - u(12), by = barY + u(6);
+        int tabX = barX + barW - u(6) - u(100), layoutX = tabX - u(6) - u(100), fxX = layoutX - u(6) - u(50);
+        button(g, fxX, by, u(50), bh, FX_NAMES[FX], accent, () -> {
+            Draw.setFx(Draw.FX + 1);
+            toast("Effects", FX_LONG[Draw.FX], false);
+        });
+        button(g, layoutX, by, u(100), bh, "HUD Layout", accent, this::openHudEditor);
+        button(g, tabX, by, u(100), bh, "Tabbed view", accent,
                 () -> GuiPreferences.setSeparateCategoryWindows(false));
 
         if (cats.isEmpty()) return;
         int gap = u(10), maxW = u(260), margin = u(10), top = barY + barH + u(10);
         int columns = Math.max(1, Math.min(cats.size(), Math.max(1, (pw - 2 * margin + gap) / (maxW + gap))));
-        int ww = Math.min(maxW, Math.max(u(160), (pw - 2 * margin - gap * (columns - 1)) / columns));
+        int defW = Math.min(maxW, Math.max(u(160), (pw - 2 * margin - gap * (columns - 1)) / columns));
         int rows = (cats.size() + columns - 1) / columns;
         int availableH = Math.max(u(150), ph - top - margin - gap * (rows - 1));
-        int wh = Math.min(u(300), Math.max(u(170), availableH / rows));
+        int defH = Math.min(u(300), Math.max(u(170), availableH / rows));
         int headerH = u(34);
-        for (int i = 0; i < cats.size(); i++) {
-            String cat = cats.get(i);
-            int defaultX = margin + (i % columns) * (ww + gap);
-            int defaultY = top + (i / columns) * (wh + gap);
-            int maxX = Math.max(0, pw - ww), maxY = Math.max(0, ph - wh);
-            double[] saved = GuiPreferences.windowPosition(catKeys[i]);
-            double defaultNX = maxX == 0 ? 0 : Math.min(1, defaultX / (double) maxX);
-            double defaultNY = maxY == 0 ? 0 : Math.min(1, defaultY / (double) maxY);
+        // back to front, so the window clicked last is drawn (and hit-tested) on top
+        for (String cat : GuiPreferences.windowOrder(cats)) {
+            int i = cats.indexOf(cat);
+            String key = catKeys[i];
+            int[] savedSize = GuiPreferences.windowSize(key);
+            int ww = Math.max(Math.min(u(CAT_MIN_W), pw), Math.min(pw, savedSize == null ? defW : u(savedSize[0])));
+            int fullH = Math.max(Math.min(u(CAT_MIN_H), ph), Math.min(ph, savedSize == null ? defH : u(savedSize[1])));
+            boolean collapsed = GuiPreferences.collapsed(key);
+            int wh = collapsed ? headerH : fullH;
+            int defaultX = margin + (i % columns) * (defW + gap);
+            int defaultY = top + (i / columns) * (defH + gap);
+            // positions are fractions of the free space for the full-height window, so collapsing keeps the header put
+            int maxX = Math.max(0, pw - ww), maxY = Math.max(0, ph - fullH);
+            double[] saved = GuiPreferences.windowPosition(key);
             if (saved == null) {
-                GuiPreferences.setWindowPosition("category:" + cat, defaultNX, defaultNY);
-                saved = new double[]{defaultNX, defaultNY};
+                saved = new double[]{maxX == 0 ? 0 : Math.min(1, defaultX / (double) maxX), maxY == 0 ? 0 : Math.min(1, defaultY / (double) maxY)};
+                GuiPreferences.setWindowPosition(key, saved[0], saved[1]);
             }
             int x = Math.round((float) (saved[0] * maxX));
             int y = Math.round((float) (saved[1] * maxY));
-            drawDetachedWindow(g, i, cat, x, y, ww, wh, headerH, maxX, maxY, dt, ms, nowNs, accent, accent2);
+            drawDetachedWindow(g, i, cat, x, y, ww, wh, fullH, collapsed, headerH, maxX, maxY, pw, ph, dt, ms, nowNs, accent, accent2);
         }
     }
 
-    private void drawDetachedWindow(GuiGraphicsExtractor g, int index, String cat, int x, int y, int w, int h,
-                                    int headerH, int maxX, int maxY, float dt, long ms, long nowNs,
-                                    int accent, int accent2) {
+    private void drawDetachedWindow(GuiGraphicsExtractor g, int index, String cat, int x, int y, int w, int h, int fullH,
+                                    boolean collapsed, int headerH, int maxX, int maxY, int pw, int ph, float dt, long ms,
+                                    long nowNs, int accent, int accent2) {
+        String key = catKeys[index];
         List<GuiModule> mods = catMods.get(index);
+        // the whole window catches clicks first (lowest priority), so a click anywhere raises it
+        hit(x, y, w, h, false, b -> GuiPreferences.bringToFront(cat), null);
         shadow(g, x, y, w, h, u(18), u(14), 0x60);
-        glass(g, x, y, w, h, u(18), alpha(0x0E1119, 0xB4), 1f);
-        fill(g, x + u(14), y + headerH, w - u(28), Math.max(1, S / 2), 0x16FFFFFF);
+        glass(g, x, y, w, h, collapsed ? headerH / 2 : u(18), alpha(0x0E1119, 0xB4), 1f);
+        if (!collapsed) fill(g, x + u(14), y + headerH, w - u(28), Math.max(1, S / 2), 0x16FFFFFF);
         icon(g, x + u(16), y + headerH / 2, categoryIcon(cat), accent);
-        text(g, x + u(30), y + headerH / 2, cat, Theme.TEXT, true);
-        textR(g, x + w - u(14), y + headerH / 2, moduleCountLabel(mods.size()), Theme.MUTED, false);
+        text(g, x + u(30), y + headerH / 2, fitText(cat, w - u(30) - u(100), true), Theme.TEXT, true);
+        int chevX = x + w - u(18);
+        boolean chevHov = inside(mx, my, chevX - u(10), y + u(4), u(20), headerH - u(8));
+        if (chevHov) circle(g, chevX, y + headerH / 2, u(10), 0x20FFFFFF);
+        chevron(g, chevX, y + headerH / 2, u(4), !collapsed, chevHov ? 0xFFFFFFFF : Theme.MUTED);
+        textR(g, chevX - u(16), y + headerH / 2, moduleCountLabel(mods.size()), Theme.MUTED, false);
 
         float dragOffsetX = mx - x, dragOffsetY = my - y;
-        hit(x + S, y + S, w - 2 * S, headerH - S, false, null, (px, py) -> {
+        hit(x + S, y + S, w - 2 * S - u(32), headerH - S, false, b -> GuiPreferences.bringToFront(cat), (px, py) -> {
             int nx = Math.max(0, Math.min(maxX, Math.round(px - dragOffsetX)));
             int ny = Math.max(0, Math.min(maxY, Math.round(py - dragOffsetY)));
-            GuiPreferences.setWindowPosition("category:" + cat, maxX == 0 ? 0 : nx / (double) maxX,
-                    maxY == 0 ? 0 : ny / (double) maxY);
+            GuiPreferences.setWindowPosition(key, maxX == 0 ? 0 : nx / (double) maxX, maxY == 0 ? 0 : ny / (double) maxY);
+        });
+        hit(chevX - u(12), y + S, u(26), headerH - S, false, b -> {
+            GuiPreferences.bringToFront(cat);
+            GuiPreferences.setCollapsed(key, !collapsed);
+        }, null);
+        detachedRects.computeIfAbsent(cat, ignored -> new WindowRect()).set(x, y, w, h);
+        if (collapsed) return;
+
+        // resize from the bottom-right corner; the top-left stays put
+        final int grabW = x + w - mx, grabH = y + h - my;
+        hit(x + w - u(14), y + h - u(14), u(14), u(14), false, b -> GuiPreferences.bringToFront(cat), (px, py) -> {
+            int nw = Math.max(Math.min(u(CAT_MIN_W), pw), Math.min(pw - x, px + grabW - x));
+            int nh = Math.max(Math.min(u(CAT_MIN_H), ph), Math.min(ph - y, py + grabH - y));
+            GuiPreferences.setWindowSize(key, Math.round(nw / (float) S), Math.round(nh / (float) S));
+            int mxw = Math.max(0, pw - nw), mxh = Math.max(0, ph - nh);
+            GuiPreferences.setWindowPosition(key, mxw == 0 ? 0 : x / (double) mxw, mxh == 0 ? 0 : y / (double) mxh);
         });
 
         vx = x + u(8);
@@ -704,7 +758,7 @@ public class AnthraxScreen extends Screen {
         }
         for (int i = 0; i < mods.size(); i++) {
             GuiModule module = mods.get(i);
-            CardState state = states.computeIfAbsent(module, ignored -> new CardState());
+            CardState state = state(module);
             state.expand += ((state.open ? 1f : 0f) - state.expand) * Math.min(1f, dt * 12f);
             if (Math.abs((state.open ? 1f : 0f) - state.expand) < .005f) state.expand = state.open ? 1f : 0f;
             int header = u(48);
@@ -719,14 +773,13 @@ public class AnthraxScreen extends Screen {
         if (Math.abs(target - scroll) < .5f) scroll = target;
         detachedScrollTarget.put(cat, target);
         detachedScroll.put(cat, scroll);
-        detachedRects.computeIfAbsent(cat, ignored -> new WindowRect()).set(x, y, w, h);
 
         g.enableScissor(vx, vy, vx + vw, vy + vh);
         int cardY = vy - Math.round(scroll);
         float categoryTime = (nowNs - catNs) / 1_000_000_000f;
         for (int i = 0; i < mods.size(); i++) {
             GuiModule module = mods.get(i);
-            CardState state = states.computeIfAbsent(module, ignored -> new CardState());
+            CardState state = state(module);
             int cardHeader = cardMetrics[i * 2];
             int cardHeight = cardMetrics[i * 2 + 1];
             float appear = easeOut((categoryTime - .07f * index - .12f) / .35f);
@@ -741,6 +794,7 @@ public class AnthraxScreen extends Screen {
             int barY = vy + Math.round((vh - barH) * (scroll / Math.max(1f, content - vh)));
             round(g, vx + vw + u(2), barY, u(3), barH, u(2), 0x50FFFFFF);
         }
+        resizeGrip(g, x + w, y + h, accent);
     }
 
     // =====================================================================
@@ -774,7 +828,7 @@ public class AnthraxScreen extends Screen {
         int gap = u(8);
         int index = 0;
         for (GuiModule m : mods) {
-            CardState st = states.computeIfAbsent(m, k -> new CardState());
+            CardState st = state(m);
             st.expand += ((st.open ? 1f : 0f) - st.expand) * Math.min(1f, dt * 12f);
             if (Math.abs((st.open ? 1f : 0f) - st.expand) < 0.005f) st.expand = st.open ? 1f : 0f;
 
@@ -825,6 +879,33 @@ public class AnthraxScreen extends Screen {
     }
 
     private final float[] scratchVel = new float[1];
+
+    /** Card state, created with the open/closed state saved in the GUI preferences (no unfold animation). */
+    private CardState state(GuiModule m) {
+        CardState st = states.get(m);
+        if (st == null) {
+            st = new CardState();
+            st.open = GuiPreferences.cardOpen(m.name) && !m.settings().isEmpty();
+            st.expand = st.open ? 1f : 0f;
+            states.put(m, st);
+        }
+        return st;
+    }
+
+    private void toggleCard(GuiModule m, CardState st) {
+        st.open = !st.open;
+        GuiPreferences.setCardOpen(m.name, st.open);
+    }
+
+    /** Diagonal grip in a window's bottom-right corner. */
+    private void resizeGrip(GuiGraphicsExtractor g, int right, int bottom, int accent) {
+        int size = u(14);
+        boolean hov = inside(mx, my, right - size, bottom - size, size, size);
+        int c = hov ? accent : 0x50FFFFFF, d = Math.max(2, S), step = u(4);
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j <= i; j++)
+                round(g, right - u(6) - j * step - d, bottom - u(6) - (i - j) * step - d, d, d, d / 2, c);
+    }
 
     private void drawCard(GuiGraphicsExtractor g, GuiModule m, CardState st, int x, int y, int w,
                           int hdr, int cardH, int accent, int accent2, float dt, long ms) {
@@ -913,7 +994,7 @@ public class AnthraxScreen extends Screen {
         }
 
         hit(x, y, w, hdr, true, b -> {
-            if (b == 1 && !moduleSettings.isEmpty()) st.open = !st.open;
+            if (b == 1 && !moduleSettings.isEmpty()) toggleCard(m, st);
             else if (b == 2) binding = m;
             else if (b == 0) {
                 m.toggle();
@@ -923,7 +1004,7 @@ public class AnthraxScreen extends Screen {
             }
         }, null);
         if (!moduleSettings.isEmpty()) {
-            hit(sx - u(36), y, u(32), hdr, true, b -> st.open = !st.open, null);
+            hit(sx - u(36), y, u(32), hdr, true, b -> toggleCard(m, st), null);
         }
         if (showBind) {
             hit(bx, by, bw, bh, true, b -> {
@@ -1139,11 +1220,19 @@ public class AnthraxScreen extends Screen {
         x = hint(g, x, cy, "LMB", "toggle");
         x = hint(g, x, cy, "RMB", "settings");
         x = hint(g, x, cy, "MMB", "bind");
-        hint(g, x, cy, "Type", "search");
+        x = hint(g, x, cy, "Type", "search");
         int buttonX = ix + iw - u(118), buttonY = cy - u(10);
-        textR(g, buttonX - u(12), cy, costText + "   " + clockText, Theme.MUTED, false);
+        int layoutX = buttonX - u(106);
+        String stats = costText + "   " + clockText;
+        if (layoutX - u(12) - textWidth(stats, false) > x) textR(g, layoutX - u(12), cy, stats, Theme.MUTED, false);
+        button(g, layoutX, buttonY, u(100), u(20), "HUD Layout", Theme.accent(), this::openHudEditor);
         button(g, buttonX, buttonY, u(100), u(20), "Windows", Theme.accent(),
                 () -> GuiPreferences.setSeparateCategoryWindows(true));
+    }
+
+    private void openHudEditor() {
+        ModuleConfig.saveNow();
+        minecraft.gui.setScreen(new HudEditorScreen(this));
     }
 
     /** A keycap-style hint, returns the x after it. */
@@ -1253,6 +1342,14 @@ public class AnthraxScreen extends Screen {
         binding = null;
         int px = Math.round((float) event.x() * gs / uiOverride), py = Math.round((float) event.y() * gs / uiOverride);
         int button = event.button();
+        if (GuiPreferences.separateCategoryWindows()) {
+            // any click inside a category window raises it (front-most window under the cursor)
+            List<String> order = GuiPreferences.windowOrder(cats);
+            for (int i = order.size() - 1; i >= 0; i--) {
+                WindowRect rect = detachedRects.get(order.get(i));
+                if (rect != null && rect.contains(px, py)) { GuiPreferences.bringToFront(order.get(i)); break; }
+            }
+        }
         for (int i = hitCount - 1; i >= 0; i--) {
             Hit h = hits.get(i);
             if (!h.contains(px, py)) continue;
@@ -1373,8 +1470,10 @@ public class AnthraxScreen extends Screen {
         if (GuiPreferences.separateCategoryWindows()) {
             int px = Math.round((float) mouseX * gs / uiOverride);
             int py = Math.round((float) mouseY * gs / uiOverride);
-            for (int i = cats.size() - 1; i >= 0; i--) {
-                String cat = cats.get(i);
+            List<String> order = GuiPreferences.windowOrder(cats);
+            for (int i = order.size() - 1; i >= 0; i--) {
+                String cat = order.get(i);
+                if (GuiPreferences.collapsed("category:" + cat)) continue;
                 WindowRect rect = detachedRects.get(cat);
                 if (rect != null && rect.contains(px, py)) {
                     detachedScrollTarget.merge(cat, (float) -scrollY * u(48), Float::sum);

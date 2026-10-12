@@ -11,6 +11,12 @@ public final class GuiPreferences {
     private static String lastCategory = "";
     private static boolean separateCategoryWindows;
     private static final Map<String, double[]> windowPositions = new LinkedHashMap<>();
+    /** Window sizes in design units (pixels / Draw.S), so they survive GUI-scale changes. */
+    private static final Map<String, int[]> windowSizes = new LinkedHashMap<>();
+    private static final java.util.Set<String> collapsed = new java.util.LinkedHashSet<>();
+    /** Category windows back to front. */
+    private static final java.util.List<String> windowOrder = new java.util.ArrayList<>();
+    private static final java.util.Set<String> openCards = new java.util.LinkedHashSet<>();
 
     private GuiPreferences() {}
 
@@ -28,28 +34,38 @@ public final class GuiPreferences {
         lastCategory = properties.getProperty("gui.lastCategory", "");
         separateCategoryWindows = Boolean.parseBoolean(properties.getProperty("gui.separateCategoryWindows", "false"));
         windowPositions.clear();
-        String prefix = "gui.window.";
+        windowSizes.clear();
+        collapsed.clear();
         for (String key : properties.stringPropertyNames()) {
-            if (!key.startsWith(prefix)) continue;
-            String encoded = key.substring(prefix.length());
             try {
-                String name = new String(Base64.getUrlDecoder().decode(encoded), StandardCharsets.UTF_8);
-                String[] parts = properties.getProperty(key, "").split(",", 2);
-                if (parts.length != 2) continue;
-                double x = Double.parseDouble(parts[0]), y = Double.parseDouble(parts[1]);
-                if (Double.isFinite(x) && Double.isFinite(y)) windowPositions.put(name, new double[]{clamp(x), clamp(y)});
+                if (key.startsWith("gui.window.")) {
+                    String[] parts = properties.getProperty(key, "").split(",", 2);
+                    if (parts.length != 2) continue;
+                    double x = Double.parseDouble(parts[0]), y = Double.parseDouble(parts[1]);
+                    if (Double.isFinite(x) && Double.isFinite(y)) windowPositions.put(decode(key, "gui.window."), new double[]{clamp(x), clamp(y)});
+                } else if (key.startsWith("gui.size.")) {
+                    String[] parts = properties.getProperty(key, "").split(",", 2);
+                    if (parts.length != 2) continue;
+                    windowSizes.put(decode(key, "gui.size."), new int[]{Integer.parseInt(parts[0]), Integer.parseInt(parts[1])});
+                } else if (key.startsWith("gui.collapsed.") && Boolean.parseBoolean(properties.getProperty(key))) {
+                    collapsed.add(decode(key, "gui.collapsed."));
+                }
             } catch (RuntimeException ignored) {}
         }
+        windowOrder.clear();
+        for (String name : properties.getProperty("gui.windowOrder", "").split("\\|")) if (!name.isEmpty()) windowOrder.add(name);
+        openCards.clear();
+        for (String name : properties.getProperty("gui.openCards", "").split("\\|")) if (!name.isEmpty()) openCards.add(name);
+    }
+
+    private static String decode(String key, String prefix) {
+        return new String(Base64.getUrlDecoder().decode(key.substring(prefix.length())), StandardCharsets.UTF_8);
     }
 
     public static void save(Properties properties) {
-        properties.setProperty("gui.theme", Integer.toString(Theme.idx));
-        properties.setProperty("gui.fx", Integer.toString(Draw.FX));
-        properties.setProperty("gui.fancy", Boolean.toString(Draw.FANCY));
-        properties.setProperty("gui.antialias", Boolean.toString(Draw.AA));
-        properties.setProperty("gui.lastCategory", lastCategory);
-        properties.setProperty("gui.separateCategoryWindows", Boolean.toString(separateCategoryWindows));
-        windowPositions.forEach((name, position) -> properties.setProperty(windowKey(name), position[0] + "," + position[1]));
+        Map<String, String> values = new LinkedHashMap<>();
+        save(values);
+        values.forEach(properties::setProperty);
     }
 
     public static void save(java.util.Map<String, String> values) {
@@ -60,6 +76,10 @@ public final class GuiPreferences {
         values.put("gui.lastCategory", lastCategory);
         values.put("gui.separateCategoryWindows", Boolean.toString(separateCategoryWindows));
         windowPositions.forEach((name, position) -> values.put(windowKey(name), position[0] + "," + position[1]));
+        windowSizes.forEach((name, size) -> values.put(key("gui.size.", name), size[0] + "," + size[1]));
+        for (String name : collapsed) values.put(key("gui.collapsed.", name), "true");
+        values.put("gui.windowOrder", String.join("|", windowOrder));
+        values.put("gui.openCards", String.join("|", openCards));
     }
 
     public static String lastCategory() { return lastCategory; }
@@ -74,9 +94,35 @@ public final class GuiPreferences {
         windowPositions.put(name, new double[]{clamp(x), clamp(y)});
     }
 
-    private static String windowKey(String name) {
-        return "gui.window." + Base64.getUrlEncoder().withoutPadding()
-                .encodeToString(name.getBytes(StandardCharsets.UTF_8));
+    public static void removeWindowPosition(String name) { windowPositions.remove(name); }
+
+    /** Saved size in design units, or null. */
+    public static int[] windowSize(String name) {
+        int[] size = windowSizes.get(name);
+        return size == null ? null : size.clone();
+    }
+    public static void setWindowSize(String name, int w, int h) { windowSizes.put(name, new int[]{w, h}); }
+    public static void removeWindowSize(String name) { windowSizes.remove(name); }
+
+    public static boolean collapsed(String name) { return collapsed.contains(name); }
+    public static void setCollapsed(String name, boolean value) { if (value) collapsed.add(name); else collapsed.remove(name); }
+
+    /** Category windows back to front; unknown names go to the back in the given order. */
+    public static java.util.List<String> windowOrder(java.util.List<String> names) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (String n : names) if (!windowOrder.contains(n)) out.add(n);
+        for (String n : windowOrder) if (names.contains(n)) out.add(n);
+        return out;
+    }
+    public static void bringToFront(String name) { windowOrder.remove(name); windowOrder.add(name); }
+
+    public static boolean cardOpen(String module) { return openCards.contains(module); }
+    public static void setCardOpen(String module, boolean open) { if (open) openCards.add(module); else openCards.remove(module); }
+
+    private static String windowKey(String name) { return key("gui.window.", name); }
+
+    private static String key(String prefix, String name) {
+        return prefix + Base64.getUrlEncoder().withoutPadding().encodeToString(name.getBytes(StandardCharsets.UTF_8));
     }
     private static double clamp(double value) { return Math.max(0.0, Math.min(1.0, value)); }
 }

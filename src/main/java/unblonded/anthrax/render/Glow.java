@@ -35,8 +35,14 @@ public final class Glow {
     private static void line(PoseStack.Pose pose, VertexConsumer out, float ax, float ay, float az,
                              float bx, float by, float bz, int rgb, int alpha, float width) {
         int color = (Math.max(0, Math.min(255, alpha)) << 24) | (rgb & 0xFFFFFF);
-        out.addVertex(pose, ax, ay, az).setColor(color).setNormal(pose, 0, 0, 1).setLineWidth(width);
-        out.addVertex(pose, bx, by, bz).setColor(color).setNormal(pose, 0, 0, 1).setLineWidth(width);
+        // The line shader reads the normal as the segment's direction and widens the line perpendicular to
+        // it on screen. A fixed normal collapses lines to nothing whenever it lines up with the view.
+        float dx = bx - ax, dy = by - ay, dz = bz - az;
+        float len = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (len < 1e-6f) return;
+        dx /= len; dy /= len; dz /= len;
+        out.addVertex(pose, ax, ay, az).setColor(color).setNormal(pose, dx, dy, dz).setLineWidth(width);
+        out.addVertex(pose, bx, by, bz).setColor(color).setNormal(pose, dx, dy, dz).setLineWidth(width);
     }
 
     private static int mix(int a, int b, float t) {

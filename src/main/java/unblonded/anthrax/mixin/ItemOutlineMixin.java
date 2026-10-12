@@ -6,9 +6,12 @@ import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.item.ItemStackRenderState;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.client.resources.model.geometry.BakedQuad;
-import net.minecraft.client.renderer.texture.TextureAtlasSprite;
+import net.minecraft.client.renderer.texture.SpriteContents;
 import net.minecraft.core.Direction;
 import net.minecraft.world.item.ItemDisplayContext;
+import com.mojang.blaze3d.systems.RenderSystem;
+import org.joml.Matrix3f;
+import org.joml.Matrix4f;
 import org.joml.Vector3fc;
 import org.joml.Vector3f;
 import org.spongepowered.asm.mixin.Final;
@@ -27,6 +30,7 @@ import java.util.Map;
 
 @Mixin(ItemStackRenderState.LayerRenderState.class)
 public abstract class ItemOutlineMixin {
+    private static final Map<List<SpriteContents>, boolean[][]> MASKS = new HashMap<>();
     @Shadow @Final private List<BakedQuad> quads;
     @Shadow @Final private ItemStackRenderState this$0;
 
@@ -41,34 +45,44 @@ public abstract class ItemOutlineMixin {
                 && context != ItemDisplayContext.FIRST_PERSON_LEFT_HAND || quads.isEmpty()) return;
 
         PoseStack.Pose itemPose = pose.last().copy();
-        Map<Edge, EdgeUse> edges = new HashMap<>();
+        // First-person poses start from the inverse camera rotation (GameRenderer.renderItemInHand pushes the
+        // camera's model-view back on RenderSystem's stack), so they are world-oriented. Facing tests must
+        // run in real view space, or front/back and silhouette edges change as the player turns.
+        Matrix4f view = new Matrix4f(RenderSystem.getModelViewStack()).mul(itemPose.pose());
+        Matrix3f viewNormal = new Matrix3f(RenderSystem.getModelViewStack()).mul(itemPose.normal());
         float minX = Float.POSITIVE_INFINITY, minY = Float.POSITIVE_INFINITY, minZ = Float.POSITIVE_INFINITY;
         float maxX = Float.NEGATIVE_INFINITY, maxY = Float.NEGATIVE_INFINITY, maxZ = Float.NEGATIVE_INFINITY;
-        for (BakedQuad quad : quads) {
-            Direction direction = quad.direction();
-            Vector3fc normal = direction == null ? null : direction.step();
-            Vector3f transformedNormal = normal == null ? null : itemPose.transformNormal(normal, new Vector3f()).normalize();
-            float facing = transformedNormal == null ? 0 : transformedNormal.z;
+        for (BakedQuad quad : quads)
             for (int i = 0; i < 4; i++) {
                 Vector3fc vertex = quad.position(i);
                 minX = Math.min(minX, vertex.x()); minY = Math.min(minY, vertex.y()); minZ = Math.min(minZ, vertex.z());
                 maxX = Math.max(maxX, vertex.x()); maxY = Math.max(maxY, vertex.y()); maxZ = Math.max(maxZ, vertex.z());
-                Edge edge = Edge.of(vertex, quad.position((i + 1) & 3));
-                EdgeUse use = edges.computeIfAbsent(edge, ignored -> new EdgeUse());
-                use.add(transformedNormal, facing);
             }
-        }
 
-        // Generated 2D sprites are very thin slabs; their perimeter reads as a box instead of a silhouette.
-        float thinAxis = Math.min(maxX - minX, Math.min(maxY - minY, maxZ - minZ));
-        float longAxis = Math.max(maxX - minX, Math.max(maxY - minY, maxZ - minZ));
-        if (thinAxis < .12f && longAxis > .28f) {
-            List<Edge> spriteSilhouette = new ArrayList<>();
+        // Generated 2D items are a 1/16-thick slab: a front and back face covering the whole sprite plus a
+        // 1-pixel side strip for every opaque/transparent boundary. Outline the sprite's opaque pixels on
+        // whichever big face points at the camera, merging every texture layer so overlays add no inner lines.
+        float[] extent = {maxX - minX, maxY - minY, maxZ - minZ};
+        int thin = extent[0] <= extent[1] && extent[0] <= extent[2] ? 0 : extent[1] <= extent[2] ? 1 : 2;
+        float longAxis = Math.max(extent[0], Math.max(extent[1], extent[2]));
+        if (extent[thin] < .12f && longAxis > .28f) {
+            Direction faceDir = null;
+            float best = Float.NEGATIVE_INFINITY;
             for (BakedQuad quad : quads) {
                 Direction direction = quad.direction();
-                if (direction == null || itemPose.transformNormal(direction.step(), new org.joml.Vector3f()).z <= .05f) continue;
-                spriteContour(quad, spriteSilhouette);
+                if (direction == null || direction.getAxis().ordinal() != thin) continue;
+                float z = facing(view, viewNormal, quad, direction);
+                if (z > best) { best = z; faceDir = direction; }
             }
+            if (faceDir == null) return;
+            List<BakedQuad> faces = new ArrayList<>();
+            List<SpriteContents> sprites = new ArrayList<>();
+            for (BakedQuad quad : quads) {
+                if (quad.direction() != faceDir) continue;
+                faces.add(quad);
+                sprites.add(quad.materialInfo().sprite().contents());
+            }
+            List<Edge> spriteSilhouette = spriteContour(faces.get(0), mask(sprites));
             if (spriteSilhouette.isEmpty()) return;
             int rgb = Glow.color();
             collector.submitCustomGeometry(pose, RenderTypes.linesTranslucent(), (matrix, out) -> {
@@ -77,6 +91,16 @@ public abstract class ItemOutlineMixin {
             return;
         }
 
+        Map<Edge, EdgeUse> edges = new HashMap<>();
+        for (BakedQuad quad : quads) {
+            Direction direction = quad.direction();
+            Vector3fc normal = direction == null ? null : direction.step();
+            Vector3f transformedNormal = normal == null ? null : viewNormal.transform(normal, new Vector3f()).normalize();
+            float facing = direction == null ? 0 : facing(view, viewNormal, quad, direction);
+            for (int i = 0; i < 4; i++)
+                edges.computeIfAbsent(Edge.of(quad.position(i), quad.position((i + 1) & 3)), ignored -> new EdgeUse())
+                        .add(transformedNormal, facing);
+        }
         List<Edge> silhouette = new ArrayList<>();
         for (Map.Entry<Edge, EdgeUse> entry : edges.entrySet()) {
             EdgeUse use = entry.getValue();
@@ -90,12 +114,36 @@ public abstract class ItemOutlineMixin {
         });
     }
 
-    /** Trace opaque texture pixels on flat item faces instead of outlining the sprite's rectangular quad. */
-    private static void spriteContour(BakedQuad quad, List<Edge> out) {
-        TextureAtlasSprite sprite = quad.materialInfo().sprite();
-        var contents = sprite.contents();
-        int width = contents.width(), height = contents.height();
-        int frame = contents.getUniqueFrames().getInt(0);
+    /** How much a face points at the eye (view-space origin): 1 straight at it, 0 edge-on, negative away. */
+    private static float facing(Matrix4f view, Matrix3f viewNormal, BakedQuad quad, Direction direction) {
+        Vector3f n = viewNormal.transform(direction.step(), new Vector3f()).normalize();
+        Vector3fc p = quad.position(0);
+        Vector3f eyeToFace = view.transformPosition(p.x(), p.y(), p.z(), new Vector3f()).normalize();
+        return -n.dot(eyeToFace);
+    }
+
+    /** Union of the opaque pixels of every layer, on the finest layer's grid; cached per sprite set. */
+    private static boolean[][] mask(List<SpriteContents> sprites) {
+        boolean[][] cached = MASKS.get(sprites);
+        if (cached != null) return cached;
+        int width = 1, height = 1;
+        for (SpriteContents sprite : sprites) { width = Math.max(width, sprite.width()); height = Math.max(height, sprite.height()); }
+        boolean[][] opaque = new boolean[height][width];
+        for (SpriteContents sprite : sprites) {
+            int frame = sprite.getUniqueFrames().getInt(0);
+            int sw = sprite.width(), sh = sprite.height();
+            for (int y = 0; y < height; y++)
+                for (int x = 0; x < width; x++)
+                    if (!opaque[y][x] && !sprite.isTransparent(frame, x * sw / width, y * sh / height)) opaque[y][x] = true;
+        }
+        if (MASKS.size() > 512) MASKS.clear();   // sprites are replaced on every resource reload
+        MASKS.put(List.copyOf(sprites), opaque);
+        return opaque;
+    }
+
+    /** Pixel-boundary contour of the mask, mapped onto the face quad through its UV corners, as merged straight runs. */
+    private static List<Edge> spriteContour(BakedQuad quad, boolean[][] opaque) {
+        List<Edge> out = new ArrayList<>();
         float minU = Float.POSITIVE_INFINITY, minV = Float.POSITIVE_INFINITY;
         float maxU = Float.NEGATIVE_INFINITY, maxV = Float.NEGATIVE_INFINITY;
         Vector3fc[] positions = new Vector3fc[4];
@@ -108,39 +156,45 @@ public abstract class ItemOutlineMixin {
             minU = Math.min(minU, us[i]); maxU = Math.max(maxU, us[i]);
             minV = Math.min(minV, vs[i]); maxV = Math.max(maxV, vs[i]);
         }
-        if (maxU <= minU || maxV <= minV) return;
-        Vector3fc p00 = null, p10 = null, p11 = null, p01 = null;
+        if (maxU <= minU || maxV <= minV) return out;
+        Vector3fc[] c = new Vector3fc[4];   // 00, 10, 11, 01 in texture space
         for (int i = 0; i < 4; i++) {
             boolean right = us[i] > (minU + maxU) * .5f;
             boolean bottom = vs[i] > (minV + maxV) * .5f;
-            if (!right && !bottom) p00 = positions[i];
-            else if (right && !bottom) p10 = positions[i];
-            else if (right) p11 = positions[i];
-            else p01 = positions[i];
+            c[right ? bottom ? 2 : 1 : bottom ? 3 : 0] = positions[i];
         }
-        if (p00 == null || p10 == null || p11 == null || p01 == null) return;
+        if (c[0] == null || c[1] == null || c[2] == null || c[3] == null) return out;
 
-        boolean[][] opaque = new boolean[height][width];
-        for (int y = 0; y < height; y++)
-            for (int x = 0; x < width; x++) opaque[y][x] = !contents.isTransparent(frame, x, y);
-
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                if (!opaque[y][x]) continue;
-                if (y == 0 || !opaque[y - 1][x]) out.add(new Edge(mapPixel(p00, p10, p11, p01, x, y, width, height),
-                        mapPixel(p00, p10, p11, p01, x + 1, y, width, height)));
-                if (x == width - 1 || !opaque[y][x + 1]) out.add(new Edge(mapPixel(p00, p10, p11, p01, x + 1, y, width, height),
-                        mapPixel(p00, p10, p11, p01, x + 1, y + 1, width, height)));
-                if (y == height - 1 || !opaque[y + 1][x]) out.add(new Edge(mapPixel(p00, p10, p11, p01, x + 1, y + 1, width, height),
-                        mapPixel(p00, p10, p11, p01, x, y + 1, width, height)));
-                if (x == 0 || !opaque[y][x - 1]) out.add(new Edge(mapPixel(p00, p10, p11, p01, x, y + 1, width, height),
-                        mapPixel(p00, p10, p11, p01, x, y, width, height)));
+        int height = opaque.length, width = opaque[0].length;
+        // horizontal boundaries between row y-1 and row y
+        for (int y = 0; y <= height; y++) {
+            int run = -1;
+            for (int x = 0; x <= width; x++) {
+                boolean edge = x < width && (y > 0 && opaque[y - 1][x]) != (y < height && opaque[y][x]);
+                if (edge && run < 0) run = x;
+                else if (!edge && run >= 0) {
+                    out.add(new Edge(mapPixel(c, run, y, width, height), mapPixel(c, x, y, width, height)));
+                    run = -1;
+                }
             }
         }
+        // vertical boundaries between column x-1 and column x
+        for (int x = 0; x <= width; x++) {
+            int run = -1;
+            for (int y = 0; y <= height; y++) {
+                boolean edge = y < height && (x > 0 && opaque[y][x - 1]) != (x < width && opaque[y][x]);
+                if (edge && run < 0) run = y;
+                else if (!edge && run >= 0) {
+                    out.add(new Edge(mapPixel(c, x, run, width, height), mapPixel(c, x, y, width, height)));
+                    run = -1;
+                }
+            }
+        }
+        return out;
     }
 
-    private static Point mapPixel(Vector3fc p00, Vector3fc p10, Vector3fc p11, Vector3fc p01,
-                                  int x, int y, int width, int height) {
+    private static Point mapPixel(Vector3fc[] c, int x, int y, int width, int height) {
+        Vector3fc p00 = c[0], p10 = c[1], p11 = c[2], p01 = c[3];
         float u = x / (float) width, v = y / (float) height;
         float ax = p00.x() + (p10.x() - p00.x()) * u, ay = p00.y() + (p10.y() - p00.y()) * u, az = p00.z() + (p10.z() - p00.z()) * u;
         float bx = p01.x() + (p11.x() - p01.x()) * u, by = p01.y() + (p11.y() - p01.y()) * u, bz = p01.z() + (p11.z() - p01.z()) * u;

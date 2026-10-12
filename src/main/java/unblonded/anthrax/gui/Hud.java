@@ -58,6 +58,26 @@ public final class Hud {
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("anthrax", "hud"), Hud::render);
     }
 
+    /** Draws one movable block at (x, y); boxW/boxH are its size last frame. Returns {w, h}, or null if hidden. */
+    private interface Painter { int[] paint(int x, int y, int boxW, int boxH); }
+
+    /**
+     * Places, draws and records one movable block. Returns the next default stack position: blocks that
+     * were never moved keep stacking like the classic layout, moved ones leave the stack.
+     */
+    private static int element(String id, int pw, int ph, int defX, int defY, int gap, Painter painter) {
+        int[] size = HudLayout.size(id);
+        boolean moved = HudLayout.hasSaved(id);
+        int[] at = HudLayout.place(id, size[0], size[1], pw, ph, defX, defY);
+        int[] drawn = painter.paint(at[0], at[1], size[0], size[1]);
+        if (drawn == null || drawn[0] <= 0 || drawn[1] <= 0) return defY;
+        HudLayout.record(id, at[0], at[1], drawn[0], drawn[1]);
+        return moved ? defY : defY + drawn[1] + gap;
+    }
+
+    /** The HUD's UI scale for a frame of this height (the editor needs the same scale). */
+    static int hudScale(int ph) { return Math.max(1, Math.min(4, Math.round(ph / 720f) + HudModule.INSTANCE.sizeStep())); }
+
     private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.gui.hud.isHidden()) return;
@@ -70,32 +90,63 @@ public final class Hud {
         int pw = Math.round(g.guiWidth() * gs), ph = Math.round(g.guiHeight() * gs);
         int savedScale = Draw.S;
         Font savedFont = Draw.measureFont;
-        Draw.S = Math.max(1, Math.min(4, Math.round(ph / 720f) + HudModule.INSTANCE.sizeStep()));
+        Draw.S = hudScale(ph);
         Draw.measureFont = mc.font;
         Theme.tick(System.currentTimeMillis());
         g.pose().pushMatrix();
         g.pose().scale(1f / gs, 1f / gs);
         try {
             int accent = Theme.accent(), accent2 = Theme.accent2();
-            int margin = u(6);
+            int margin = u(6), gap = u(6);
+            boolean editing = mc.gui.screen() instanceof HudEditorScreen;
+            HudLayout.beginFrame();
+            // Every block goes through HudLayout: a saved spot if it was moved, else the classic stacked default.
             int leftY = margin;
-            if (HudModule.INSTANCE.watermark()) leftY += watermark(g, mc, margin, margin, accent, accent2) + u(6);
-            leftY = panels(g, mc, margin, leftY, accent, accent2);
-            if (!menuOpen) {
+            HudModule hud = HudModule.INSTANCE;
+            if (hud.watermark()) leftY = element("watermark", pw, ph, margin, leftY, gap, (x, y, bw, bh) -> watermark(g, mc, x, y, accent, accent2));
+            AirUnderCheckModule dig = AirUnderCheckModule.INSTANCE;
+            if (dig.showStatus()) leftY = element("dig", pw, ph, margin, leftY, gap, (x, y, bw, bh) -> digPanel(g, x, y, dig, accent));
+            PlayerListModule list = PlayerListModule.INSTANCE;
+            if (list.isEnabled() && (list.showWhenEmpty() || !list.entries().isEmpty()))
+                leftY = element("players", pw, ph, margin, leftY, gap, (x, y, bw, bh) -> new int[]{PlayerIntelPanel.width(), PlayerIntelPanel.render(g, mc, x, y, accent)});
+            BaseFinderModule finder = BaseFinderModule.INSTANCE;
+            if (finder.showHud()) leftY = element("basefinder", pw, ph, margin, leftY, gap, (x, y, bw, bh) -> basePanel(g, mc, x, y, finder, accent));
+            FpsChartModule chart = FpsChartModule.INSTANCE;
+            if (chart.visible(mc)) {
+                chart.sample(mc.getFps());
+                leftY = element("fps", pw, ph, margin, leftY, gap, (x, y, bw, bh) -> fpsPanel(g, x, y, chart, mc.getFps(), accent, accent2));
+            }
+            if (!menuOpen && !editing) {
                 nametags(g, mc, pw, ph, accent);
                 waypointLabels(g, mc, pw, ph);
                 pinnedCards(g, mc, pw, ph, accent);
-                if (unblonded.anthrax.modules.combat.TargetHudModule.INSTANCE.isEnabled()) targetHud(g, mc, pw, ph, dt, accent);
             }
+            if (!menuOpen && unblonded.anthrax.modules.combat.TargetHudModule.INSTANCE.isEnabled())
+                element("target", pw, ph, pw / 2 + u(18), ph / 2 + u(14), 0, (x, y, bw, bh) -> targetHud(g, mc, x, y, dt, accent));
             int rightY = margin;
-            if (HudModule.INSTANCE.moduleList()) rightY = moduleList(g, pw, margin, dt, accent, accent2) + u(6);
+            if (hud.moduleList())
+                rightY = element("modules", pw, ph, pw - margin - HudLayout.size("modules")[0], rightY, gap,
+                        (x, y, bw, bh) -> moduleList(g, x, y, bw, pw, dt, accent, accent2));
             else SLIDE.clear();
-            if (HudModule.INSTANCE.effects()) effects(g, mc, pw, rightY);
-            if (HudModule.INSTANCE.armorHud()) armorHud(g, mc, gs);
+            if (hud.effects())
+                element("effects", pw, ph, pw - margin - HudLayout.size("effects")[0], rightY, gap, (x, y, bw, bh) -> effects(g, mc, x, y, bw, pw));
+            if (hud.armorHud())
+                element("armor", pw, ph, Math.round((g.guiWidth() / 2f + 91 + 6) * gs), Math.round((g.guiHeight() - 20) * gs), 0,
+                        (x, y, bw, bh) -> armorHud(g, mc, x, y));
             trackClicks(mc);
-            if (HudModule.INSTANCE.keystrokes()) keystrokes(g, mc, pw, ph, accent);
-            if (!menuOpen && HudModule.INSTANCE.notifications()) toasts(g, pw, ph, accent, u(10));
-            if (HudModule.INSTANCE.coordinates() && !(mc.gui.screen() instanceof ChatScreen)) coordinates(g, mc, ph);
+            if (hud.keystrokes()) {
+                int[] ks = keystrokeSize();
+                element("keystrokes", pw, ph, pw - u(8) - ks[0], ph - u(64) - ks[1], 0, (x, y, bw, bh) -> keystrokes(g, mc, x, y, accent));
+            }
+            if (!menuOpen && hud.notifications()) {
+                int tw = u(220);
+                element("toasts", pw, ph, pw - u(10) - tw, ph - u(10) - HudLayout.size("toasts")[1], 0,
+                        (x, y, bw, bh) -> toastStack(g, x, y, tw, bh, pw, ph, accent));
+            }
+            if (hud.coordinates() && !(mc.gui.screen() instanceof ChatScreen)) {
+                int ch = HudLayout.size("coords")[1];
+                element("coords", pw, ph, u(4), ph - u(6) - ch, 0, (x, y, bw, bh) -> coordinates(g, mc, x, y));
+            }
         } finally {
             g.pose().popMatrix();
             Draw.S = savedScale;
@@ -107,20 +158,21 @@ public final class Hud {
     private static LivingEntity hudTarget;
     private static float hudHealth = -1, hudFade;
 
-    private static void targetHud(GuiGraphicsExtractor g, Minecraft mc, int pw, int ph, float dt, int accent) {
+    private static int[] targetHud(GuiGraphicsExtractor g, Minecraft mc, int x, int y, float dt, int accent) {
         var module = unblonded.anthrax.modules.combat.TargetHudModule.INSTANCE;
         LivingEntity t = unblonded.anthrax.modules.combat.CombatUtil.target();
         if (t != null && !(t instanceof Player) && !module.showMobs()) t = null;
         if (t != null && t != hudTarget) { hudTarget = t; hudHealth = -1; }
         hudFade += ((t != null ? 1 : 0) - hudFade) * Math.min(1, dt * 12);
-        if (hudFade < 0.02f || hudTarget == null) { if (t == null) hudTarget = null; return; }
+        if (hudFade < 0.02f || hudTarget == null) { if (t == null) hudTarget = null; return null; }
         LivingEntity e = hudTarget;
         float max = Math.max(1, e.getMaxHealth()), hp = e.getHealth() + e.getAbsorptionAmount();
         if (hudHealth < 0) hudHealth = hp;
         hudHealth += (hp - hudHealth) * Math.min(1, dt * 10);
 
         int w = u(150), h = u(module.showArmor() ? 58 : 44);
-        int x = pw / 2 + u(18), y = ph / 2 + u(14) + Math.round((1 - hudFade) * u(8));
+        int boxY = y;
+        y += Math.round((1 - hudFade) * u(8));
         int a = Math.round(hudFade * 255);
         shadow(g, x, y, w, h, u(12), u(8), Math.round(0x50 * hudFade));
         glass(g, x, y, w, h, u(12), alpha(0x0E1119, Math.round(0xD0 * hudFade)), 0.9f * hudFade);
@@ -172,10 +224,11 @@ public final class Hud {
                 ix += icon + u(4);
             }
         }
+        return new int[]{w, h + y - boxY};
     }
 
     // ------------------------------------------------------------------ watermark
-    private static int watermark(GuiGraphicsExtractor g, Minecraft mc, int x, int y, int accent, int accent2) {
+    private static int[] watermark(GuiGraphicsExtractor g, Minecraft mc, int x, int y, int accent, int accent2) {
         long now = System.currentTimeMillis();
         if (now - clockAt > 1000) { clock = LocalTime.now().format(CLOCK); clockAt = now; }
         String info = mc.getFps() + " fps   " + ping(mc) + " ms   " + clock;
@@ -192,7 +245,7 @@ public final class Hud {
         tx += titleW + u(10);
         fill(g, tx, cy - u(6), S, u(12), Theme.LINE);
         text(g, tx + S + u(10), cy, info, Theme.SUBTEXT, false);
-        return h;
+        return new int[]{w, h};
     }
 
     private static int ping(Minecraft mc) {
@@ -202,7 +255,7 @@ public final class Hud {
     }
 
     // ------------------------------------------------------------------ module list
-    private static int moduleList(GuiGraphicsExtractor g, int pw, int margin, float dt, int accent, int accent2) {
+    private static int[] moduleList(GuiGraphicsExtractor g, int bx, int by, int boxW, int pw, float dt, int accent, int accent2) {
         ROWS.clear();
         boolean details = HudModule.INSTANCE.listInfo();
         for (GuiModule module : ModuleRegistry.all()) {
@@ -221,15 +274,21 @@ public final class Hud {
         ROWS.sort((a, b) -> Integer.compare(b.width(), a.width()));
         String mode = HudModule.INSTANCE.listColor();
         // Each module is its own rounded glass pill: soft shadow, frosted body with a top gloss, and a
-        // glowing accent dot. Pills slide in from the right edge and the stack closes up smoothly.
+        // glowing accent dot. Pills align to whichever screen side the list sits on, slide in from that
+        // edge, and the stack closes up smoothly.
         int rowH = u(16), pad = u(7), gap = u(3), radius = u(6), dot = Math.max(3, u(5));
-        int y = margin;
+        if (ROWS.isEmpty()) return null;
+        int extra = pad * 2 + dot + u(6);
+        int listW = ROWS.getFirst().width() + extra;
+        boolean right = HudLayout.rightSide(bx, listW, pw);
+        int y = by;
         int n = ROWS.size();
         for (int i = 0; i < n; i++) {
             Row row = ROWS.get(i);
             float e = 1f - (1f - row.slide()) * (1f - row.slide()) * (1f - row.slide());
-            int w = row.width() + pad * 2 + dot + u(6);
-            int x = pw - margin - w + Math.round((1f - e) * (w + margin));
+            int w = row.width() + extra;
+            int slideOut = Math.round((1f - e) * (w + u(6)));
+            int x = right ? bx + listW - w + slideOut : bx - slideOut;
             int color = switch (mode) {
                 case "Rainbow" -> hsl(Theme.hue - i * 14f, 0.9f, 0.66f);
                 case "White" -> Theme.TEXT;
@@ -247,7 +306,7 @@ public final class Hud {
                 text(g, x + pad + textWidth(row.name(), false) + u(5), cy, row.info(), Theme.MUTED, false);
             y += Math.round((rowH + gap) * e);
         }
-        return y;
+        return new int[]{listW, Math.max(rowH, y - by - gap)};
     }
 
     // ------------------------------------------------------------------ nametags
@@ -354,11 +413,11 @@ public final class Hud {
     }
 
     // ------------------------------------------------------------------ armor, effects, keystrokes
-    private static void armorHud(GuiGraphicsExtractor g, Minecraft mc, float gs) {
+    private static int[] armorHud(GuiGraphicsExtractor g, Minecraft mc, int x0, int y) {
         EquipmentSlot[] slots = {EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET};
         int icon = u(16), gap = u(4);
-        // to the right of the hotbar (182 GUI px wide, centred)
-        int x = Math.round((g.guiWidth() / 2f + 91 + 6) * gs), y = Math.round((g.guiHeight() - 20) * gs);
+        // defaults to the right of the hotbar (182 GUI px wide, centred)
+        int x = x0;
         for (EquipmentSlot s : slots) {
             ItemStack st = mc.player.getItemBySlot(s);
             if (st.isEmpty()) continue;
@@ -373,12 +432,18 @@ public final class Hud {
             }
             x += icon + gap;
         }
+        return x == x0 ? null : new int[]{x - x0 - gap, icon + u(10)};
     }
 
-    private static void effects(GuiGraphicsExtractor g, Minecraft mc, int pw, int y) {
+    private static int[] effects(GuiGraphicsExtractor g, Minecraft mc, int bx, int by, int boxW, int pw) {
         var active = mc.player.getActiveEffects();
-        if (active.isEmpty()) return;
-        int rowH = u(16);
+        if (active.isEmpty()) return null;
+        int rowH = u(16), y = by, listW = 0;
+        for (MobEffectInstance eff : active) {
+            String name = eff.getEffect().value().getDisplayName().getString() + (eff.getAmplifier() > 0 ? " " + (eff.getAmplifier() + 1) : "");
+            listW = Math.max(listW, textWidth(name, false) + u(8) + textWidth("00:00", false) + u(16));
+        }
+        boolean right = HudLayout.rightSide(bx, listW, pw);
         for (MobEffectInstance eff : active) {
             String name = eff.getEffect().value().getDisplayName().getString() + (eff.getAmplifier() > 0 ? " " + (eff.getAmplifier() + 1) : "");
             String time;
@@ -386,13 +451,14 @@ public final class Hud {
             else { int secs = eff.getDuration() / 20; time = (secs / 60) + ":" + String.format("%02d", secs % 60); }
             int color = 0xFF000000 | eff.getEffect().value().getColor();
             int w = textWidth(name, false) + u(8) + textWidth(time, false) + u(16);
-            int x = pw - u(6) - w;
+            int x = right ? bx + listW - w : bx;
             fill(g, x, y, w, rowH, alpha(0x0E1119, 0xB8));
             round(g, x + w - Math.max(2, S) - S, y + S, Math.max(2, S), rowH - 2 * S, S, color);
             text(g, x + u(6), y + rowH / 2, name, lerp(color, 0xFFFFFFFF, 0.4f), false);
             text(g, x + u(6) + textWidth(name, false) + u(8), y + rowH / 2, time, Theme.MUTED, false);
             y += rowH;
         }
+        return new int[]{listW, y - by};
     }
 
     private static final java.util.ArrayDeque<Long> LEFT_CLICKS = new java.util.ArrayDeque<>(), RIGHT_CLICKS = new java.util.ArrayDeque<>();
@@ -411,11 +477,15 @@ public final class Hud {
         while (!RIGHT_CLICKS.isEmpty() && now - RIGHT_CLICKS.peekFirst() > 1000) RIGHT_CLICKS.pollFirst();
     }
 
-    private static void keystrokes(GuiGraphicsExtractor g, Minecraft mc, int pw, int ph, int accent) {
+    private static int[] keystrokeSize() {
+        int k = u(22), gap = u(3);
+        return new int[]{k * 3 + gap * 2, k * 3 + gap * 3 + u(12)};
+    }
+
+    private static int[] keystrokes(GuiGraphicsExtractor g, Minecraft mc, int x0, int y0, int accent) {
         var o = mc.options;
         int k = u(22), gap = u(3);
         int gridW = k * 3 + gap * 2;
-        int x0 = pw - u(8) - gridW, y0 = ph - u(64) - (k * 3 + gap * 3 + u(14));
         key(g, x0 + k + gap, y0, k, k, "W", o.keyUp.isDown(), accent);
         key(g, x0, y0 + k + gap, k, k, "A", o.keyLeft.isDown(), accent);
         key(g, x0 + k + gap, y0 + k + gap, k, k, "S", o.keyDown.isDown(), accent);
@@ -424,6 +494,7 @@ public final class Hud {
         key(g, x0, my, half, k, LEFT_CLICKS.size() + " CPS", o.keyAttack.isDown(), accent);
         key(g, x0 + half + gap, my, half, k, RIGHT_CLICKS.size() + " CPS", o.keyUse.isDown(), accent);
         key(g, x0, my + k + gap, gridW, u(12), "", o.keyJump.isDown(), accent);
+        return keystrokeSize();
     }
 
     private static void key(GuiGraphicsExtractor g, int x, int y, int w, int h, String label, boolean down, int accent) {
@@ -433,28 +504,13 @@ public final class Hud {
     }
 
     // ------------------------------------------------------------------ info panels
-    private static int panels(GuiGraphicsExtractor g, Minecraft mc, int x, int y, int accent, int accent2) {
-        AirUnderCheckModule dig = AirUnderCheckModule.INSTANCE;
-        if (dig.showStatus()) y += digPanel(g, x, y, dig, accent) + u(6);
-        PlayerListModule list = PlayerListModule.INSTANCE;
-        if (list.isEnabled() && !list.entries().isEmpty()) y += playerPanel(g, x, y, list.entries(), accent) + u(6);
-        BaseFinderModule finder = BaseFinderModule.INSTANCE;
-        if (finder.showHud()) y += basePanel(g, mc, x, y, finder, accent) + u(6);
-        FpsChartModule chart = FpsChartModule.INSTANCE;
-        if (chart.visible(mc)) {
-            chart.sample(mc.getFps());
-            y += fpsPanel(g, x, y, chart, mc.getFps(), accent, accent2) + u(6);
-        }
-        return y;
-    }
-
     private static void panel(GuiGraphicsExtractor g, int x, int y, int w, int h, int accent) {
         shadow(g, x, y, w, h, u(10), u(6), 0x40);
         glass(g, x, y, w, h, u(10), alpha(0x0E1119, 0xC8), 0.8f);
         round(g, x + u(3), y + u(8), Math.max(2, S), h - u(16), S, accent);
     }
 
-    private static int digPanel(GuiGraphicsExtractor g, int x, int y, AirUnderCheckModule dig, int accent) {
+    private static int[] digPanel(GuiGraphicsExtractor g, int x, int y, AirUnderCheckModule dig, int accent) {
         AirUnderCheckModule.Status status = dig.status();
         int color = switch (status) {
             case SAFE -> Theme.OK;
@@ -479,40 +535,7 @@ public final class Hud {
         circle(g, x + u(13), cy, u(3), color);
         text(g, x + u(22), cy, label, color, true);
         textR(g, x + w - u(10), cy, yText, Theme.MUTED, false);
-        return h;
-    }
-
-    private static int playerPanel(GuiGraphicsExtractor g, int x, int y, List<PlayerListModule.Entry> entries, int accent) {
-        int rowH = u(24), headH = u(20), w = u(196);
-        int h = headH + entries.size() * rowH + u(4);
-        panel(g, x, y, w, h, accent);
-        text(g, x + u(10), y + headH / 2 + S, "NEARBY PLAYERS", Theme.DIM, true);
-        textR(g, x + w - u(10), y + headH / 2 + S, Integer.toString(entries.size()), accent, true);
-        int ry = y + headH;
-        for (PlayerListModule.Entry e : entries) {
-            float hpFrac = e.maxHealth() <= 0 ? 0 : Math.min(1f, e.health() / e.maxHealth());
-            int hpColor = hpFrac > 0.6f ? Theme.OK : hpFrac > 0.3f ? 0xFFFFC94A : Theme.DANGER;
-            int icon = u(16);
-            if (!e.mainHand().isEmpty()) {
-                g.pose().pushMatrix();
-                g.pose().translate(x + u(10), ry + (rowH - icon) / 2f);
-                g.pose().scale(icon / 16f, icon / 16f);
-                g.item(e.mainHand(), 0, 0);
-                g.pose().popMatrix();
-            }
-            int nx = x + u(10) + icon + u(6);
-            String dist = String.format("%.0fm", e.distance());
-            text(g, nx, ry + u(8), e.name(), e.sneaking() ? Theme.MUTED : Theme.TEXT, false);
-            textR(g, x + w - u(10), ry + u(8), dist, Theme.SUBTEXT, false);
-            String detail = String.format("%.1f hp", e.health()) + "   " + e.armor() + " armor"
-                    + (e.pops() > 0 ? "   " + e.pops() + (e.pops() == 1 ? " pop" : " pops") : "");
-            text(g, nx, ry + u(17), detail, e.pops() > 0 ? 0xFFFFC94A : Theme.MUTED, false);
-            int barW = u(36);
-            round(g, x + w - u(10) - barW, ry + u(16), barW, u(3), u(1), 0xFF26263A);
-            round(g, x + w - u(10) - barW, ry + u(16), Math.max(u(3), Math.round(barW * hpFrac)), u(3), u(1), hpColor);
-            ry += rowH;
-        }
-        return h;
+        return new int[]{w, h};
     }
 
     /** Gauge animation per base id (ids survive re-clustering, objects do not). */
@@ -522,7 +545,7 @@ public final class Hud {
      * Base Finder card: the focused base (tracked, or the one you are looking toward) with live gauges,
      * its storage inventory and the strongest activity clue, followed by the next few bases.
      */
-    private static int basePanel(GuiGraphicsExtractor g, Minecraft mc, int x, int y, BaseFinderModule finder, int accent) {
+    private static int[] basePanel(GuiGraphicsExtractor g, Minecraft mc, int x, int y, BaseFinderModule finder, int accent) {
         List<BaseFinderModule.Base> all = finder.bases();
         BaseFinderModule.Base focus = null;   // the focused base's stats are pinned over it in the world
         int w = u(236), headH = u(22), rowH = u(24);
@@ -538,7 +561,7 @@ public final class Hud {
         int ry = y + headH;
         if (all.isEmpty()) {
             text(g, x + u(14), ry + rowH / 2, "No player activity detected yet", Theme.MUTED, false);
-            return h;
+            return new int[]{w, h};
         }
         for (BaseFinderModule.Base b : others) {
             int cy = ry + rowH / 2;
@@ -553,7 +576,7 @@ public final class Hud {
             round(g, x + w - u(10) - barW, ry + u(17), Math.max(u(3), barW * b.unraided / 100), u(3), u(1), lerp(Theme.DANGER, Theme.OK, b.unraided / 100f));
             ry += rowH;
         }
-        return h;
+        return new int[]{w, h};
     }
 
     // ------------------------------------------------------------------ cards pinned over bases in the world
@@ -668,7 +691,7 @@ public final class Hud {
         g.pose().popMatrix();
     }
 
-    private static int fpsPanel(GuiGraphicsExtractor g, int x, int y, FpsChartModule chart, int fps, int accent, int accent2) {
+    private static int[] fpsPanel(GuiGraphicsExtractor g, int x, int y, FpsChartModule chart, int fps, int accent, int accent2) {
         int w = u(196), headH = u(20), chartH = u(40), h = headH + chartH + u(10);
         panel(g, x, y, w, h, accent);
         int filled = chart.filled();
@@ -699,11 +722,11 @@ public final class Hud {
             int c = v < 30 ? Theme.DANGER : v < 60 ? 0xFFFFC94A : lerp(accent, accent2, i / (float) samples);
             vgrad(g, x0, cy + chartH - bh, Math.max(1, x1 - x0), bh, c, alpha(c, 0x50));
         }
-        return h;
+        return new int[]{w, h};
     }
 
     // ------------------------------------------------------------------ coordinates
-    private static void coordinates(GuiGraphicsExtractor g, Minecraft mc, int ph) {
+    private static int[] coordinates(GuiGraphicsExtractor g, Minecraft mc, int bx, int by) {
         var p = mc.player;
         String pos = String.format("XYZ  %.0f  %.0f  %.0f", p.getX(), p.getY(), p.getZ());
         String other = null;
@@ -712,14 +735,14 @@ public final class Hud {
         else if (mc.level != null && mc.level.dimension() == Level.NETHER)
             other = String.format("Overworld  %.0f  %.0f", p.getX() * 8, p.getZ() * 8);
         String facing = "Facing " + capitalize(p.getDirection().getName());
-        int lineH = u(13), x = u(8);
-        int y = ph - u(8) - lineH * (other == null ? 2 : 3);
+        int lineH = u(13), x = bx + u(4), y = by + u(2);
         int w = Math.max(textWidth(pos, false), Math.max(other == null ? 0 : textWidth(other, false), textWidth(facing, false))) + u(16);
         int h = lineH * (other == null ? 2 : 3) + u(4);
         round(g, x - u(4), y - u(2), w, h, u(5), alpha(Theme.BG, 0xB0));
         text(g, x + u(4), y + lineH / 2, pos, Theme.TEXT, false);
         if (other != null) text(g, x + u(4), y + lineH + lineH / 2, other, Theme.MUTED, false);
         text(g, x + u(4), y + lineH * (other == null ? 1 : 2) + lineH / 2, facing, Theme.MUTED, false);
+        return new int[]{w, h};
     }
 
     private static String capitalize(String s) {
@@ -727,21 +750,39 @@ public final class Hud {
     }
 
     // ------------------------------------------------------------------ notifications
+    /** HUD toasts inside their movable box: stacks up from the bottom edge on the lower half, down otherwise. */
+    private static int[] toastStack(GuiGraphicsExtractor g, int bx, int by, int w, int boxH, int pw, int ph, int accent) {
+        int n = Notifications.active().size();
+        if (n == 0) return null;
+        int h = u(40), gap = u(6), total = n * h + (n - 1) * gap;
+        boolean up = HudLayout.bottomSide(by, boxH, ph);
+        // anchor to the edge the box hugs, so the stack grows away from it
+        int top = up ? by + boxH - total : by;
+        toastsAt(g, bx, top, w, HudLayout.rightSide(bx, w, pw), accent);
+        return new int[]{w, total};
+    }
+
     /** Shared by the HUD and the menu so toasts look identical everywhere. */
     static void toasts(GuiGraphicsExtractor g, int pw, int ph, int accent, int bottomGap) {
-        List<Notifications.Entry> entries = Notifications.active();
-        if (entries.isEmpty()) return;
-        long now = System.currentTimeMillis();
+        int n = Notifications.active().size();
+        if (n == 0) return;
         int w = u(220), h = u(40), gap = u(6);
-        int yb = ph - bottomGap;
-        for (int i = entries.size() - 1; i >= 0; i--) {
+        toastsAt(g, pw - u(10) - w, ph - bottomGap - (n * h + (n - 1) * gap), w, true, accent);
+    }
+
+    /** Draws the toast stack top-down from (bx, top), newest at the bottom, sliding in from the near side. */
+    private static void toastsAt(GuiGraphicsExtractor g, int bx, int top, int w, boolean fromRight, int accent) {
+        List<Notifications.Entry> entries = Notifications.active();
+        long now = System.currentTimeMillis();
+        int h = u(40), gap = u(6);
+        for (int i = 0; i < entries.size(); i++) {
             Notifications.Entry t = entries.get(i);
             float age = (now - t.born()) / 1000f;
             float life = Notifications.LIFETIME_MS / 1000f;
             float in = 1f - easeOut(age / 0.28f), out = easeOut((age - (life - 0.35f)) / 0.35f);
-            int x = pw - u(10) - w + Math.round((in + out) * (w + u(20)));
-            int y = yb - h;
-            yb -= h + gap;
+            int slide = Math.round((in + out) * (w + u(20)));
+            int x = fromRight ? bx + slide : bx - slide;
+            int y = top + i * (h + gap);
             int col = Notifications.color(t.kind(), accent);
             shadow(g, x, y, w, h, u(14), u(8), 0x50);
             glass(g, x, y, w, h, u(14), alpha(0x12141D, 0xE6), 1f);

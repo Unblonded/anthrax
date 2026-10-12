@@ -14,14 +14,15 @@ import static unblonded.anthrax.gui.Draw.*;
  * Storage Scan's search box, shown in container screens while the module is on (bottom-right until you
  * move it). Type to highlight matching slots live; it shows how many slots match. Click it (or press
  * Ctrl+F) to focus, Esc or Enter to unfocus. While focused it takes the keyboard, so typing "e" does not
- * close the inventory. Drag the icon at its left end to move it; the spot is saved with the GUI settings
- * as a fraction of the screen, so it stays put across sessions and window sizes.
+ * close the inventory. Drag the icon at its left end to move it (or use the HUD editor); the spot is saved
+ * with the GUI settings as a fraction of the screen, so it stays put across sessions and window sizes.
  */
 public final class ScanBox {
     private static final TextEdit EDIT = new TextEdit(StorageScanModule::query, StorageScanModule::setQuery, 64);
-    private static final String POSITION_KEY = "__storage_scan_box";
+    /** Shares the HUD layout, so the HUD editor can move it too. */
+    private static final String HUD_ID = "scanbox";
     private static boolean focused, moving;
-    private static int bx, by, bw, bh, textX, grabX, grabY, maxX, maxY;
+    private static int bx, by, bw, bh, textX, grabX, grabY, screenW, screenH;
 
     private ScanBox() {}
 
@@ -45,11 +46,12 @@ public final class ScanBox {
             bw = u(190);
             bh = u(28);
             int margin = u(10);
-            maxX = Math.max(0, pw - bw - 2 * margin);
-            maxY = Math.max(0, ph - bh - 2 * margin);
-            double[] saved = GuiPreferences.windowPosition(POSITION_KEY);
-            bx = margin + Math.round((float) ((saved == null ? 1.0 : saved[0]) * maxX));
-            by = margin + Math.round((float) ((saved == null ? 1.0 : saved[1]) * maxY));
+            screenW = pw;
+            screenH = ph;
+            int[] at = HudLayout.place(HUD_ID, bw, bh, pw, ph, pw - bw - margin, ph - bh - margin);
+            bx = at[0];
+            by = at[1];
+            HudLayout.record(HUD_ID, bx, by, bw, bh);
             int r = bh / 2, cy = by + bh / 2;
             boolean hov = inside(mouseX(), mouseY(), bx, by, bw, bh);
             boolean handleHov = moving || inside(mouseX(), mouseY(), bx, by, handleWidth(), bh);
@@ -118,11 +120,10 @@ public final class ScanBox {
     public static boolean mouseDragged(double guiX, double guiY) {
         if (!active()) return false;
         if (moving) {
-            int margin = u(10);
-            int nx = Math.max(0, Math.min(maxX, (int) Math.round(guiX * scale()) - grabX - margin));
-            int ny = Math.max(0, Math.min(maxY, (int) Math.round(guiY * scale()) - grabY - margin));
+            int nx = Math.max(0, Math.min(screenW - bw, (int) Math.round(guiX * scale()) - grabX));
+            int ny = Math.max(0, Math.min(screenH - bh, (int) Math.round(guiY * scale()) - grabY));
             // saved as a fraction of the free space, picked up by the config autosave
-            GuiPreferences.setWindowPosition(POSITION_KEY, maxX == 0 ? 0 : nx / (double) maxX, maxY == 0 ? 0 : ny / (double) maxY);
+            HudLayout.move(HUD_ID, nx, ny, bw, bh, screenW, screenH);
             return true;
         }
         if (!focused) return false;
