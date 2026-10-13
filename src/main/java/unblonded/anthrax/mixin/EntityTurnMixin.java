@@ -15,9 +15,12 @@ import unblonded.anthrax.modules.visual.ZoomModule;
 public abstract class EntityTurnMixin {
     @Inject(method = "turn", at = @At("HEAD"), cancellable = true)
     private void anthrax$freecamLook(double yRot, double xRot, CallbackInfo ci) {
-        if ((Object) this != Minecraft.getInstance().player || !FreecamModule.INSTANCE.active()) return;
-        FreecamModule.INSTANCE.turn(yRot, xRot);
-        ci.cancel();
+        if ((Object) this != Minecraft.getInstance().player) return;
+        if (FreecamModule.INSTANCE.active()) { FreecamModule.INSTANCE.turn(yRot, xRot); ci.cancel(); return; }
+        if (unblonded.anthrax.modules.visual.FreelookModule.INSTANCE.active()) {
+            unblonded.anthrax.modules.visual.FreelookModule.INSTANCE.turn(yRot, xRot);
+            ci.cancel();
+        }
     }
 
     @ModifyVariable(method = "turn", at = @At("HEAD"), ordinal = 0, argsOnly = true)

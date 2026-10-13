@@ -86,5 +86,9 @@ public final class KillAuraModule extends FeatureModule {
     public LivingEntity target() { return target; }
 
     @Override public String hudInfo() { return target == null ? priority.get() : target.getName().getString(); }
-    @Override protected void onToggle(boolean enabled) { target = null; }
+    @Override protected void onToggle(boolean enabled) {
+        target = null;
+        // TP Aura replaces Kill Aura: only one of them runs
+        if (enabled) unblonded.anthrax.modules.hvh.TpAuraModule.INSTANCE.setEnabled(false);
+    }
 }

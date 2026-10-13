@@ -35,6 +35,7 @@ public class Anthrax implements ClientModInitializer {
             ModuleConfig.tick();
             TotemPops.tick(client);
             FeatureManager.tick(client);
+            unblonded.anthrax.modules.player.AutoReconnectModule.INSTANCE.screenTick(client);
         });
     }
 }

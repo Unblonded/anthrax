@@ -508,6 +508,9 @@ public class AnthraxScreen extends Screen {
     private static String categoryIcon(String category) {
         return switch (category) {
             case "Combat" -> Icons.CROSSHAIRS;
+            case "HVH" -> Icons.SKULL;
+            case "Movement" -> Icons.PERSON_RUNNING;
+            case "Player" -> Icons.USER;
             case "Mining" -> Icons.GEM;
             case "World" -> Icons.MAP_LOCATION_DOT;
             case "Visuals" -> Icons.EYE;
@@ -569,11 +572,14 @@ public class AnthraxScreen extends Screen {
         glass(g, px, py, pw, ph, u(18), 0x0CFFFFFF, 0.3f);
         text(g, px + u(14), py + u(16), "Categories", Theme.DIM, true);
 
-        int tabH = u(32), gap = u(4);
+        int gap = u(4);
         int x = px + u(6), w = pw - u(12);
         int y0 = py + u(30);
         // Settings is pinned above the active-modules gauge, apart from the module categories
         int settingsIdx = cats.indexOf(SETTINGS_CATEGORY);
+        // tabs shrink (down to a readable minimum) so every category and the pinned tab fit the window
+        int listed = Math.max(1, cats.size() - (settingsIdx >= 0 ? 1 : 0));
+        int tabH = Math.max(u(22), Math.min(u(32), (py + ph - u(60) - y0 - (listed - 1) * gap) / (listed + 1)));
         int settingsY = py + ph - u(30) - u(16) - tabH;
 
         // the selection is a glass drop that springs between tabs (with a little overshoot)
@@ -1908,6 +1914,53 @@ public class AnthraxScreen extends Screen {
             case "Chat Filter" -> new ItemStack(Items.PAPER);
             case "Storage Scan" -> new ItemStack(Items.CHEST);
             case "New Chunks" -> new ItemStack(Items.GRASS_BLOCK);
+            case "Auto Walk", "Speed" -> new ItemStack(Items.LEATHER_BOOTS);
+            case "Step" -> new ItemStack(Items.STONE_STAIRS);
+            case "High Jump", "Long Jump" -> new ItemStack(Items.RABBIT_FOOT);
+            case "Fly", "Glide" -> new ItemStack(Items.FEATHER);
+            case "Spider" -> new ItemStack(Items.COBWEB);
+            case "Fast Ladder" -> new ItemStack(Items.LADDER);
+            case "Fast Fall", "Reverse Step" -> new ItemStack(Items.ANVIL);
+            case "Parkour" -> new ItemStack(Items.SLIME_BLOCK);
+            case "Jesus" -> new ItemStack(Items.WATER_BUCKET);
+            case "Entity Speed" -> new ItemStack(Items.SADDLE);
+            case "Boat Fly" -> new ItemStack(Items.OAK_BOAT);
+            case "Elytra Boost" -> new ItemStack(Items.ELYTRA);
+            case "Safe Walk" -> new ItemStack(Items.OAK_TRAPDOOR);
+            case "Auto Respawn" -> new ItemStack(Items.TOTEM_OF_UNDYING);
+            case "Auto Tool" -> new ItemStack(Items.DIAMOND_PICKAXE);
+            case "Auto Fish" -> new ItemStack(Items.FISHING_ROD);
+            case "Chest Stealer" -> new ItemStack(Items.CHEST_MINECART);
+            case "Anti AFK" -> new ItemStack(Items.CLOCK);
+            case "Coord Snapper" -> new ItemStack(Items.FILLED_MAP);
+            case "Key Pearl" -> new ItemStack(Items.ENDER_PEARL);
+            case "Auto Mend" -> new ItemStack(Items.EXPERIENCE_BOTTLE);
+            case "Durability Alert" -> new ItemStack(Items.DAMAGED_ANVIL);
+            case "Refill" -> new ItemStack(Items.HOPPER);
+            case "Notifier" -> new ItemStack(Items.BELL);
+            case "Auto Reconnect" -> new ItemStack(Items.REPEATER);
+            case "Auto Farm" -> new ItemStack(Items.WHEAT);
+            case "Nuker" -> new ItemStack(Items.TNT);
+            case "Bed Breaker" -> new ItemStack(Items.RESPAWN_ANCHOR);
+            case "Scaffold" -> new ItemStack(Items.SCAFFOLDING);
+            case "Tower" -> new ItemStack(Items.COBBLESTONE_WALL);
+            case "Air Place" -> new ItemStack(Items.GLASS);
+            case "Speed Mine" -> new ItemStack(Items.GOLDEN_PICKAXE);
+            case "Auto Clicker" -> new ItemStack(Items.STONE_BUTTON);
+            case "Reach" -> new ItemStack(Items.TRIDENT);
+            case "Shield Breaker" -> new ItemStack(Items.NETHERITE_AXE);
+            case "Auto Block" -> new ItemStack(Items.SHIELD);
+            case "Freelook" -> new ItemStack(Items.SPYGLASS);
+            case "Item ESP" -> new ItemStack(Items.GOLD_INGOT);
+            case "Spawner Notifier" -> new ItemStack(Items.SPAWNER);
+            case "Auto Trap" -> new ItemStack(Items.OBSIDIAN);
+            case "Auto Web" -> new ItemStack(Items.COBWEB);
+            case "Cover Planner" -> new ItemStack(Items.COMPASS);
+            case "Hole Filler" -> new ItemStack(Items.CRYING_OBSIDIAN);
+            case "Pearl Trap" -> new ItemStack(Items.ENDER_EYE);
+            case "Target Strafe" -> new ItemStack(Items.TARGET);
+            case "TP Aura" -> new ItemStack(Items.CHORUS_FRUIT);
+            case "Trap Early Warning" -> new ItemStack(Items.TRIPWIRE_HOOK);
             case "Client Settings" -> new ItemStack(Items.COMPARATOR);
             default -> ItemStack.EMPTY;
         };

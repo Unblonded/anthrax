@@ -52,7 +52,7 @@ public final class ModuleRegistry {
     private static Map<String, List<GuiModule>> BY_CATEGORY = Map.of();
 
     /** Sidebar order; categories not listed here follow in registration order. */
-    private static final List<String> CATEGORY_ORDER = List.of("Combat", "Mining", "World", "Visuals", "Utility", "Client");
+    private static final List<String> CATEGORY_ORDER = List.of("Combat", "HVH", "Movement", "Player", "Mining", "World", "Visuals", "Utility", "Client");
 
     static {
         addFeature(CrystalAuraModule.INSTANCE);
@@ -109,6 +109,57 @@ public final class ModuleRegistry {
         addFeature(unblonded.anthrax.modules.client.ProfilesModule.INSTANCE);
         addFeature(unblonded.anthrax.modules.client.ClientSettingsModule.INSTANCE);
         addFeature(FontSizeModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.movement.AutoWalkModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.movement.StepModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.movement.HighJumpModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.movement.SpeedModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.movement.FlyModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.movement.SpiderModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.movement.FastLadderModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.movement.GlideModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.movement.FastFallModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.movement.ReverseStepModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.movement.ParkourModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.movement.JesusModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.movement.EntitySpeedModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.movement.BoatFlyModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.movement.ElytraBoostModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.movement.LongJumpModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.movement.SafeWalkModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.player.AutoRespawnModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.player.AutoToolModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.player.AutoFishModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.player.ChestStealerModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.player.AntiAfkModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.player.CoordSnapperModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.player.KeyPearlModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.player.AutoMendModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.player.DurabilityAlertModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.player.RefillModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.player.NotifierModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.player.AutoReconnectModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.world.AutoFarmModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.world.NukerModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.world.BedBreakerModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.world.ScaffoldModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.world.TowerModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.world.AirPlaceModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.world.SpeedMineModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.combat.AutoClickerModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.combat.ReachModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.combat.ShieldBreakerModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.combat.AutoBlockModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.FreelookModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.ItemEspModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.SpawnerNotifierModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.hvh.AutoTrapModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.hvh.AutoWebModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.hvh.CoverPlannerModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.hvh.HoleFillerModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.hvh.PearlTrapModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.hvh.TargetStrafeModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.hvh.TpAuraModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.hvh.TrapEarlyWarningModule.INSTANCE);
     }
 
     private ModuleRegistry() {}

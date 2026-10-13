@@ -43,6 +43,11 @@
     "NametagHideMixin",
     "LivingNametagHideMixin",
     "TitleScreenMixin",
-    "MenuFramerateMixin"
+    "MenuFramerateMixin",
+    "FreecamHandMixin",
+    "FreecamSkyMixin",
+    "FishingHookAccessor",
+    "PlayerEdgeMixin",
+    "GameModeAccessor"
   ]
 }

@@ -22,8 +22,20 @@ public final class WorldOverlays {
             StorageEspModule.INSTANCE, TracersModule.INSTANCE, HoleEspModule.INSTANCE,
             LogoutSpotsModule.INSTANCE, BreadcrumbsModule.INSTANCE, TrajectoriesModule.INSTANCE,
             unblonded.anthrax.modules.world.AmethystEspModule.INSTANCE,
-            unblonded.anthrax.modules.world.NewChunksModule.INSTANCE
+            unblonded.anthrax.modules.world.NewChunksModule.INSTANCE,
+            ItemEspModule.INSTANCE, SpawnerNotifierModule.INSTANCE, AirPlacePreview.INSTANCE,
+            unblonded.anthrax.modules.hvh.CoverPlannerModule.INSTANCE, unblonded.anthrax.modules.hvh.TrapEarlyWarningModule.INSTANCE
     };
+
+    /** Outline where Air Place will put the held block. */
+    private enum AirPlacePreview implements Overlay {
+        INSTANCE;
+        @Override public boolean active() { return unblonded.anthrax.modules.world.AirPlaceModule.INSTANCE.showPreview(); }
+        @Override public void draw(Minecraft mc, float partial, Vec3 eye, Vec3 look) {
+            var at = unblonded.anthrax.modules.world.AirPlaceModule.INSTANCE.spot(mc);
+            if (at != null) Gizmos.cuboid(at, net.minecraft.gizmos.GizmoStyle.stroke(argb(0xC0, 0xFFFFFF), 1.5f));
+        }
+    }
 
     public static void render(LevelRenderer renderer) {
         Minecraft mc = Minecraft.getInstance();
