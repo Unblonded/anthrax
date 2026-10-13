@@ -104,8 +104,8 @@ public final class SubMenuScreen extends Screen {
         g.pose().scale(scale, scale);
         g.pose().translate(-(wx + ww / 2f), -(wy + wh / 2f));
         try {
-            shadow(g, wx, wy, ww, wh, u(22), u(20), (int) (0x70 * open));
-            glass(g, wx, wy, ww, wh, u(22), alpha(0x0E1119, 0xC8), 1f);
+            shadow(g, wx, wy, ww, wh, u(R_WINDOW), u(20), (int) (0x70 * open));
+            canvas(g, wx, wy, ww, wh, u(R_WINDOW));
             int cy = wy + headH / 2;
             icon(g, wx + u(22), cy, Icons.TABLE_COLUMNS, accent);
             text(g, wx + u(36), cy, "Sub menus", Theme.TEXT, true);
@@ -113,7 +113,7 @@ public final class SubMenuScreen extends Screen {
             String filter = onlyOn ? "Enabled only" : "All";
             int fw = textWidth(filter, false) + u(30), fh = u(22), fx = wx + ww - u(14) - fw, fy = cy - fh / 2;
             boolean fhov = inside(mx, my, fx, fy, fw, fh);
-            glass(g, fx, fy, fw, fh, fh / 2, fhov ? 0x28FFFFFF : 0x14FFFFFF, fhov ? 1 : .4f);
+            liquidButton(g, fx, fy, fw, fh, hover("sub:filter", fhov), false, 0xFFFFFF, mx);
             icon(g, fx + u(11), cy, onlyOn ? Icons.EYE : Icons.LAYER_GROUP, fhov ? 0xFFFFFFFF : Theme.SUBTEXT);
             text(g, fx + u(21), cy, filter, fhov ? 0xFFFFFFFF : Theme.SUBTEXT, false);
             hits.add(new Hit(fx, fy, fw, fh, b -> ClientSettingsModule.INSTANCE.setOnlyEnabled(!onlyOn)));

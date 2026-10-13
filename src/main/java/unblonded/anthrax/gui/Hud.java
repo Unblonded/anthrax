@@ -78,6 +78,41 @@ public final class Hud {
         return moved ? defY : defY + drawn[1] + gap;
     }
 
+    /** Blocks stacked down the top-left and top-right corners, in order; the rest have a fixed spot below. */
+    static final java.util.List<String> LEFT_STACK = java.util.List.of("watermark", "dig", "players", "basefinder", "fps");
+    static final java.util.List<String> RIGHT_STACK = java.util.List.of("modules", "effects");
+
+    /** Default left edge for a block that was never moved (stacked blocks: the stack's column). */
+    static int defX(String id, int pw, float gs) {
+        int w = HudLayout.size(id)[0], margin = u(6);
+        return switch (id) {
+            // centred above the hotbar, clear of the crosshair
+            case "target" -> (pw - w) / 2;
+            // right of the hotbar (182 GUI px wide, centred), past the offhand slot
+            case "armor" -> Math.round((pw / gs / 2f + 91 + 6) * gs);
+            case "coords" -> margin;
+            default -> RIGHT_STACK.contains(id) || id.equals("keystrokes") || id.equals("toasts") || id.equals("scanbox") ? pw - margin - w : margin;
+        };
+    }
+
+    /** Default top edge for a fixed block (stacked blocks get theirs from the stack). */
+    static int defY(String id, int ph, float gs) {
+        int h = HudLayout.size(id)[1], margin = u(6);
+        return switch (id) {
+            // bottom edge just above the hearts, armor bar and action bar text
+            case "target" -> ph - Math.round(78 * gs) - h;
+            case "armor" -> Math.round((ph / gs - 20) * gs);
+            // bottom-right corner
+            case "keystrokes", "scanbox" -> ph - margin - h;
+            // bottom-right, stacked above the keystrokes when they sit in their corner
+            case "toasts" -> ph - margin - h - (HudModule.INSTANCE.keystrokes() && !HudLayout.hasSaved("keystrokes")
+                    ? HudLayout.size("keystrokes")[1] + u(6) : 0);
+            // bottom-left, under where chat messages sit
+            case "coords" -> ph - margin - h;
+            default -> margin;
+        };
+    }
+
     /** The HUD's UI scale for a frame of this height (the editor needs the same scale). */
     static int hudScale(int ph) { return Math.max(1, Math.min(4, Math.round(ph / 720f) + HudModule.INSTANCE.sizeStep())); }
 
@@ -125,7 +160,7 @@ public final class Hud {
                 pinnedCards(g, mc, pw, ph, accent);
             }
             if (!menuOpen && unblonded.anthrax.modules.combat.TargetHudModule.INSTANCE.isEnabled())
-                element("target", pw, ph, pw / 2 + u(18), ph / 2 + u(14), 0, (x, y, bw, bh) -> targetHud(g, mc, x, y, dt, accent));
+                element("target", pw, ph, defX("target", pw, gs), defY("target", ph, gs), 0, (x, y, bw, bh) -> targetHud(g, mc, x, y, dt, accent));
             int rightY = margin;
             if (hud.moduleList())
                 rightY = element("modules", pw, ph, pw - margin - HudLayout.size("modules")[0], rightY, gap,
@@ -134,21 +169,18 @@ public final class Hud {
             if (hud.effects())
                 element("effects", pw, ph, pw - margin - HudLayout.size("effects")[0], rightY, gap, (x, y, bw, bh) -> effects(g, mc, x, y, bw, pw));
             if (hud.armorHud())
-                element("armor", pw, ph, Math.round((g.guiWidth() / 2f + 91 + 6) * gs), Math.round((g.guiHeight() - 20) * gs), 0,
+                element("armor", pw, ph, defX("armor", pw, gs), defY("armor", ph, gs), 0,
                         (x, y, bw, bh) -> armorHud(g, mc, x, y));
             trackClicks(mc);
-            if (hud.keystrokes()) {
-                int[] ks = keystrokeSize();
-                element("keystrokes", pw, ph, pw - u(8) - ks[0], ph - u(64) - ks[1], 0, (x, y, bw, bh) -> keystrokes(g, mc, x, y, accent));
-            }
+            if (hud.keystrokes())
+                element("keystrokes", pw, ph, defX("keystrokes", pw, gs), defY("keystrokes", ph, gs), 0, (x, y, bw, bh) -> keystrokes(g, mc, x, y, accent));
             if (!menuOpen && hud.notifications()) {
                 int tw = u(220);
-                element("toasts", pw, ph, pw - u(10) - tw, ph - u(10) - HudLayout.size("toasts")[1], 0,
+                element("toasts", pw, ph, defX("toasts", pw, gs), defY("toasts", ph, gs), 0,
                         (x, y, bw, bh) -> toastStack(g, x, y, tw, bh, pw, ph, accent));
             }
             if (hud.coordinates() && !(mc.gui.screen() instanceof ChatScreen)) {
-                int ch = HudLayout.size("coords")[1];
-                element("coords", pw, ph, u(4), ph - u(6) - ch, 0, (x, y, bw, bh) -> coordinates(g, mc, x, y));
+                element("coords", pw, ph, defX("coords", pw, gs), defY("coords", ph, gs), 0, (x, y, bw, bh) -> coordinates(g, mc, x, y));
             }
         } finally {
             g.pose().popMatrix();

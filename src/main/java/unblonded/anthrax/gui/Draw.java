@@ -43,6 +43,24 @@ final class Draw {
     static boolean ICONS = true;
 
     static int S = 2;
+
+    // ---------------------------------------------------------------- design tokens
+    // All in design units (pass through u() like any other size). Spacing sits on a 4-unit grid.
+    static final int SP_XS = 4, SP_S = 8, SP_M = 12, SP_L = 16, SP_XL = 24;
+    /** Corner radii: floating windows, and cards or panels inside them. Pills use h / 2. */
+    static final int R_WINDOW = 24, R_CARD = 16;
+    /** Translucent tinted gray behind every window pane: dark enough for white text, the blurred world still shows through. */
+    static final int GLASS_TINT = 0xB4181A20;
+    /** Extra smoke pooled in a window's middle, fading out toward the rim, so the edge reads as thick bright glass. */
+    static final int GLASS_CORE = 0x5C000000;
+    /** Faint white sheet over the tint, so the pane still reads as glass rather than a flat slab. */
+    static final int GLASS_SHEET = 0x0CFFFFFF;
+    /** Rim glare on the top and left edges of a fully lit pane. */
+    static final int GLASS_SPECULAR = 0x90FFFFFF;
+    /** Rim shade on the bottom and right edges (the far side of the glass). */
+    static final int GLASS_DEPTH = 0x20000000;
+    /** Text drop shadow on/off (a 1 px dark copy under light text keeps it readable on glass). */
+    static boolean TEXT_SHADOW = true;
     /** Approx. glyph box height in design units (matches a TTF "size" of ~9). */
     static final float TH = 9f;
 
@@ -343,22 +361,138 @@ final class Draw {
     }
 
     /**
-     * A liquid-glass pane: translucent body, specular sheen on the upper half, and a light rim.
-     * {@code body} should be translucent; the world behind the menu is already blurred.
+     * Glass rim lit from the top-left: {@code tl} on the top and left edges, {@code br} on the bottom and
+     * right, passing through {@code mid} at the other two corners. Nothing overlaps, so translucent colors
+     * stay even. Swap tl and br for a recessed (inset) edge.
+     */
+    static void rim(GuiGraphicsExtractor g, int x, int y, int w, int h, int r, int t, int tl, int mid, int br) {
+        if (w <= 0 || h <= 0 || t <= 0) return;
+        r = Math.max(t, Math.min(r, Math.min(w, h) / 2));
+        if (r < 2) {
+            hgrad(g, x, y, w, t, tl, mid);
+            hgrad(g, x, y + h - t, w, t, mid, br);
+            vgrad(g, x, y + t, t, h - 2 * t, tl, mid);
+            vgrad(g, x + w - t, y + t, t, h - 2 * t, mid, br);
+            return;
+        }
+        var ring = Shapes.ring(r, t);
+        int d = 2 * r;
+        Shapes.blit(g, ring, x, y, r, r, 0, 0, r, r, d, d, tl);
+        Shapes.blit(g, ring, x + w - r, y, r, r, r, 0, r, r, d, d, mid);
+        Shapes.blit(g, ring, x, y + h - r, r, r, 0, r, r, r, d, d, mid);
+        Shapes.blit(g, ring, x + w - r, y + h - r, r, r, r, r, r, r, d, d, br);
+        hgrad(g, x + r, y, w - 2 * r, t, tl, mid);
+        hgrad(g, x + r, y + h - t, w - 2 * r, t, mid, br);
+        vgrad(g, x, y + r, t, h - 2 * r, tl, mid);
+        vgrad(g, x + w - t, y + r, t, h - 2 * r, mid, br);
+    }
+
+    /** Rim width: one real pixel up to UI scale 3, so the edge stays crisp instead of turning into a band. */
+    static int rimWidth() { return Math.max(1, S / 2); }
+
+    /**
+     * A liquid-glass pane: translucent body, specular sheen on the upper half, and a 1 px rim lit from
+     * the top-left (glare on top and left, depth shade on bottom and right). {@code lift} (0..1) is how
+     * strongly it catches the light: idle controls sit around 0.35, hovered controls and windows at 1.
      */
     static void glass(GuiGraphicsExtractor g, int x, int y, int w, int h, int r, int body, float lift) {
         if (w <= 0 || h <= 0) return;
         r = Math.max(0, Math.min(r, Math.min(w, h) / 2));
         round(g, x, y, w, h, r, body);
-        int t = Math.max(1, S / 2 + (S > 2 ? 1 : 0));
+        int t = rimWidth();
         if (FANCY) {
             // specular sheen: strongest at the top edge, fading out by ~45% of the height
-            int sheenA = Math.round(0x16 + 0x10 * lift);
+            int sheenA = Math.round(0x12 + 0x14 * lift);
             round(g, x + t, y + t, w - 2 * t, Math.max(1, r - t), Math.max(0, r - t), alpha(0xFFFFFF, sheenA), true, false);
             int fadeTop = y + r, fadeH = Math.max(0, Math.round(h * 0.45f) - r);
             vgrad(g, x + t, fadeTop, w - 2 * t, fadeH, alpha(0xFFFFFF, sheenA), 0x00FFFFFF);
         }
-        outline(g, x, y, w, h, r, t, alpha(0xFFFFFF, Math.round(0x3A + 0x30 * lift)), alpha(0xFFFFFF, Math.round(0x10 + 0x10 * lift)));
+        int glare = Math.round((GLASS_SPECULAR >>> 24) * (0.55f + 0.45f * Math.max(0f, Math.min(1f, lift))));
+        rim(g, x, y, w, h, r, t, alpha(0xFFFFFF, glare), alpha(0xFFFFFF, glare / 3), GLASS_DEPTH);
+        if (!FANCY || w < 6 * t || h < 6 * t) return;
+        // thick glass shows two edges: a faint second rim one pixel in, lit the same way
+        rim(g, x + t, y + t, w - 2 * t, h - 2 * t, Math.max(0, r - t), t,
+                alpha(0xFFFFFF, glare / 4), alpha(0xFFFFFF, glare / 10), alpha(0xFFFFFF, glare / 8));
+        // caustic: light that came in through the top leaves along the bottom edge, brightest right of centre
+        int span = w - 2 * Math.max(r, t);
+        if (span > 0) {
+            int half = Math.max(1, span / 3);
+            shineC(g, x + Math.max(r, t), span, y + h - 3 * t, t, x + Math.max(r, t) + span - half, half,
+                    Math.round(0x50 * lift), 0xFFFFFF);
+        }
+    }
+
+    /**
+     * A floating window: a translucent tinted gray ({@link #GLASS_TINT}) over the blurred world with a faint
+     * glass sheet on top, so white text keeps its contrast over snow, sky or sand. Lite mode has no blur
+     * behind it, so the tint is denser there.
+     */
+    static void canvas(GuiGraphicsExtractor g, int x, int y, int w, int h, int r) {
+        r = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+        round(g, x, y, w, h, r, FX > 0 ? GLASS_TINT : alpha(GLASS_TINT, 0xE0));
+        if (FANCY) {
+            // lens edge: smoke pools in the middle and thins toward the rim, so the border band reads as
+            // thick glass bending more light (one smooth soft fill, concentric with the pane, no seams)
+            int e = u(2), fade = Math.max(2, Math.min(u(14), Math.min(w, h) / 4));
+            soft(g, x + e, y + e, w - 2 * e, h - 2 * e, Math.max(0, r - e - fade), fade, GLASS_CORE);
+            // light pool: a broad, slowly drifting glow under the top edge, left of centre, like a window
+            // light caught in the glass
+            int span = w - 2 * r;
+            if (span > 0 && r > 0) {
+                int half = Math.max(1, span / 4);
+                float drift = 0.5f + 0.5f * (float) Math.sin(System.currentTimeMillis() / 2600.0);
+                int cx = x + r + half + Math.round((span - 2 * half) * (0.15f + 0.3f * drift));
+                int t = rimWidth();
+                shineC(g, x + r, span, y + t, Math.max(1, r - t), cx, half, 0x1C, 0xFFFFFF);
+            }
+        }
+        glass(g, x, y, w, h, r, GLASS_SHEET, 1f);
+    }
+
+    /**
+     * Liquid-glass pill control. Idle it is a clear sheet and a lit rim, with no box behind it. As
+     * {@code hover} rises (0..1) the sheet fills in, tinted with {@code tint}, the sheen brightens, and a
+     * shimmer of light follows the cursor across the pill. {@code pressed} fills it a step further; the
+     * caller sinks the label with it.
+     */
+    static void liquidButton(GuiGraphicsExtractor g, int x, int y, int w, int h, float hover, boolean pressed, int tint, int mouseX) {
+        if (w <= 0 || h <= 0) return;
+        float k = Math.max(0f, Math.min(1f, hover));
+        int r = Math.min(w, h) / 2;
+        int body = pressed ? alpha(tint, 0x58) : lerp(0x0CFFFFFF, alpha(tint, 0x3A), k);
+        glass(g, x, y, w, h, r, body, 0.35f + 0.65f * k);
+        if (!FANCY || k < 0.02f) return;
+        // shimmer: a soft band of light under the cursor, kept inside the straight part so it never
+        // spills past the rounded caps
+        int t = rimWidth(), span = w - 2 * r;
+        if (span <= 0) return;
+        int half = Math.max(1, Math.min(span / 2, Math.max(h, w / 3)));
+        int cx = Math.max(x + r + half, Math.min(x + w - r - half, mouseX));
+        shineC(g, x + r, span, y + t, h - 2 * t, cx, half, Math.round(0x26 * k), 0xFFFFFF);
+    }
+
+    /** Slider or progress channel cut into the glass: dark fill with a rim lit from below (an inset edge). */
+    static void track(GuiGraphicsExtractor g, int x, int y, int w, int h) {
+        round(g, x, y, w, h, h / 2, 0x38000000);
+        rim(g, x, y, w, h, h / 2, rimWidth(), 0x40000000, 0x14FFFFFF, 0x30FFFFFF);
+    }
+
+    /** Eased hover state per control: current amount and when it was last updated (System.nanoTime). */
+    private static final class Ease { float v; long t = System.nanoTime(); }
+    private static final Map<String, Ease> HOVER = new HashMap<>();
+
+    /**
+     * Eased hover amount (0..1) for a control, keyed by a stable id, so fills and shimmer ease in and out
+     * (~70 ms) instead of snapping. Time is tracked per control, so it needs no frame delta. The clock is
+     * kept as a long: nanoTime counts from boot, and as a float it would only tick every ~0.1 s.
+     */
+    static float hover(String id, boolean hovered) {
+        long now = System.nanoTime();
+        Ease st = HOVER.computeIfAbsent(id, k -> new Ease());
+        float dt = Math.min(0.05f, Math.max(0f, (now - st.t) / 1e9f));
+        st.t = now;
+        st.v += ((hovered ? 1f : 0f) - st.v) * Math.min(1f, dt * 30f);
+        return st.v;
     }
 
     /**
@@ -501,9 +635,25 @@ final class Draw {
         // Vanilla draws the font baseline a fixed 7px below the y we pass, regardless of TTF size,
         // so large fonts end up too high. Compensate: put the visual middle of the caps on cy.
         int y = cy - Math.round(BASELINE) + Math.round(CAP_CENTER * 9f * S) + Math.round(TEXT_NUDGE * S);
+        if (shadowed(color)) {
+            int o = rimWidth();
+            Component sh = styled(s, shadowOf(color), bold);
+            if (al == null) g.textRenderer().accept(x + o, y + o, sh);
+            else g.textRenderer().accept(al, x + o, y + o, sh);
+        }
         if (al == null) g.textRenderer().accept(x, y, c);
         else g.textRenderer().accept(al, x, y, c);
     }
+
+    /** Light text gets a shadow; dark text (on white knobs or bright chips) would only smear. */
+    private static boolean shadowed(int color) {
+        if (!TEXT_SHADOW) return false;
+        int r = (color >> 16) & 255, gr = (color >> 8) & 255, b = color & 255;
+        return r * 299 + gr * 587 + b * 114 > 128_000;
+    }
+
+    /** Shadow color: the text color at a quarter brightness, like vanilla's, so tinted text keeps its hue. */
+    private static int shadowOf(int color) { return (color & 0xFCFCFC) >> 2; }
 
     private static Component styled(String s, int color, boolean bold) {
         int scale = Math.max(0, Math.min(S, FONTS.length) - 1);
@@ -537,6 +687,12 @@ final class Draw {
                 k -> Component.literal(glyph).withStyle(st -> st.withColor(rgb).withFont(ICON_FONTS[scale])));
         // Glyph boxes are ~8*S tall with the baseline 7 px below y (see draw); center them like text.
         int y = cy - Math.round(BASELINE) + Math.round(0.42f * 8f * S);
+        if (shadowed(color)) {
+            int sh = shadowOf(color), o = rimWidth();
+            Component shadow = ICON_CACHE.computeIfAbsent(new TextKey(glyph, sh, false, scale),
+                    k -> Component.literal(glyph).withStyle(st -> st.withColor(sh).withFont(ICON_FONTS[scale])));
+            g.textRenderer().accept(TextAlignment.CENTER, cx + o, y + o, shadow);
+        }
         g.textRenderer().accept(TextAlignment.CENTER, cx, y, c);
     }
 

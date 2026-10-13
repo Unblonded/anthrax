@@ -41,6 +41,8 @@
     "CombatHooksMixin",
     "VelocityMixin",
     "NametagHideMixin",
-    "LivingNametagHideMixin"
+    "LivingNametagHideMixin",
+    "TitleScreenMixin",
+    "MenuFramerateMixin"
   ]
 }

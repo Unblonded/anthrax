@@ -13,8 +13,8 @@ final class Theme {
     static final int LINE = 0xFF24243A;
     static final int TEXT = 0xFFE8E8F2;
     static final int SUBTEXT = 0xFFB9BDD0;
-    static final int MUTED = 0xFF8A8FA5;
-    static final int DIM = 0xFF5C6075;
+    static final int MUTED = 0xFF9499AF;
+    static final int DIM = 0xFF6E7389;
     static final int OK = 0xFF3DFFA0;
     static final int DANGER = 0xFFFF4D6D;
 
@@ -25,7 +25,8 @@ final class Theme {
 
     static void tick(long ms) {
         float h = HUES[idx];
-        hue = h < 0 ? (ms / 60f) % 360f : h;
+        // modulo first: epoch millis as a float only changes every ~2 minutes
+        hue = h < 0 ? (ms % 21_600L) / 60f : h;
     }
 
     static void next() { idx = (idx + 1) % NAMES.length; }

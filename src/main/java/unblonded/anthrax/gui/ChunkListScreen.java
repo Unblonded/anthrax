@@ -39,6 +39,22 @@ public final class ChunkListScreen extends Screen {
     private static int tab;                 // 0 all, 1 new, 2 old, 3 old generation
     private static boolean newestFirst;
     private static int cell = 8;            // mini map chunk size in design units
+    /** Map pan, in chunks from the player (session only). */
+    private static float panX, panZ;
+    private static final String WINDOW = "__chunks";
+    private static final int DEF_W = 720, DEF_H = 440, MIN_W = 560, MIN_H = 360;
+
+    /** What a held left button is doing: nothing, panning the map, moving the window, or resizing it. */
+    private enum Drag { NONE, MAP, MOVE, RESIZE }
+    private Drag drag = Drag.NONE;
+    private double pressX, pressY;
+    private boolean mapMoved;
+    private int grabX, grabY;
+    private int wx, wy, ww, wh, headH;
+    // map geometry from the last frame, so a click can be turned into a chunk
+    private int mapCx, mapCy, mapCell;
+    private float mapCenterX, mapCenterZ;
+    private final Map<Long, Found> mapCells = new HashMap<>();
     private final List<Hit> hits = new ArrayList<>();
     private final float[] tabAnim = {-1};
     private Found selected;
@@ -103,17 +119,23 @@ public final class ChunkListScreen extends Screen {
         g.fill(0, 0, pw, ph, alpha(0x05060B, (int) ((FX > 0 ? 0x5C : 0xC0) * open)));
         g.fillGradient(0, 0, pw, ph, alpha(accent, (int) (0x10 * open)), alpha(accent2, (int) (0x18 * open)));
 
-        int ww = Math.min(pw - u(20), u(720)), wh = Math.min(ph - u(20), u(440));
-        int wx = (pw - ww) / 2, wy = (ph - wh) / 2 + Math.round((1 - open) * u(20));
-        int r = u(24);
+        int[] size = GuiPreferences.windowSize(WINDOW);
+        ww = Math.max(Math.min(u(MIN_W), pw - u(20)), Math.min(pw - u(20), u(size != null ? size[0] : DEF_W)));
+        wh = Math.max(Math.min(u(MIN_H), ph - u(20)), Math.min(ph - u(20), u(size != null ? size[1] : DEF_H)));
+        double[] pos = GuiPreferences.windowPosition(WINDOW);
+        int maxX = Math.max(0, pw - ww), maxY = Math.max(0, ph - wh);
+        wx = pos == null ? maxX / 2 : (int) Math.round(pos[0] * maxX);
+        wy = (pos == null ? maxY / 2 : (int) Math.round(pos[1] * maxY)) + Math.round((1 - open) * u(20));
+        int r = u(R_WINDOW);
         shadow(g, wx, wy, ww, wh, r, u(22), (int) (0x70 * open));
-        glass(g, wx, wy, ww, wh, r, alpha(0x0E1119, 0xB8), 1f);
+        canvas(g, wx, wy, ww, wh, r);
 
         // ---- header
         List<Found> all = module.found();
         int nNew = 0, nOld = 0, nGen = 0;
         for (Found f : all) switch (f.kind()) { case NEW -> nNew++; case OLD -> nOld++; default -> nGen++; }
-        int headH = u(52), cy = wy + headH / 2, bead = u(28), bx = wx + u(16);
+        headH = u(52);
+        int cy = wy + headH / 2, bead = u(28), bx = wx + u(16);
         bead(g, bx, cy - bead / 2, bead, accent);
         icon(g, bx + bead / 2, cy, Icons.LAYER_GROUP, 0xFFFFFFFF);
         text(g, bx + bead + u(10), cy - u(6), "New Chunks", Theme.TEXT, true);
@@ -123,10 +145,10 @@ public final class ChunkListScreen extends Screen {
 
         int close = u(26), closeX = wx + ww - u(16) - close;
         boolean closeHov = inside(mx, my, closeX, cy - close / 2, close, close);
-        glass(g, closeX, cy - close / 2, close, close, close / 2, closeHov ? alpha(Theme.DANGER, 0x90) : 0x14FFFFFF, closeHov ? 1 : .4f);
+        liquidButton(g, closeX, cy - close / 2, close, close, hover(getClass().getSimpleName() + ":close", closeHov), false, Theme.DANGER, mx);
         icon(g, closeX + close / 2, cy, Icons.XMARK, closeHov ? 0xFFFFFFFF : Theme.SUBTEXT);
         hits.add(new Hit(closeX, cy - close / 2, close, close, b -> onClose()));
-        int segW = u(330), segH = u(26), segX = closeX - u(10) - segW;
+        int segW = Math.min(u(330), ww - u(330)), segH = u(26), segX = closeX - u(10) - segW;
         segmented(g, segX, cy - segH / 2, segW, segH, new String[]{"All  " + all.size(), "New  " + nNew, "Old  " + nOld, "Old gen  " + nGen}, accent);
         fill(g, wx + r, wy + headH, ww - 2 * r, Math.max(1, S / 2), 0x16FFFFFF);
 
@@ -137,7 +159,8 @@ public final class ChunkListScreen extends Screen {
         glass(g, listX, listY, listW, listH, u(18), 0x0CFFFFFF, .3f);
         int sortH = u(22), sortY = listY + u(8);
         text(g, listX + u(14), sortY + sortH / 2, list.size() + (list.size() == 1 ? " chunk" : " chunks"), Theme.DIM, true);
-        pill(g, listX + listW - u(10) - u(92), sortY, u(92), sortH, newestFirst ? "Newest" : "Nearest",
+        int sortW = Math.max(pillWidth("Newest"), pillWidth("Nearest"));
+        pill(g, listX + listW - u(10) - sortW, sortY, sortW, sortH, newestFirst ? "Newest" : "Nearest",
                 newestFirst ? Icons.CLOCK_ROTATE_LEFT : Icons.LOCATION_ARROW, accent, () -> { newestFirst = !newestFirst; scrollTarget = 0; });
         int rowsTop = sortY + sortH + u(6), rowsH = listY + listH - rowsTop - u(6);
         drawList(g, list, rowsTop, rowsH, dt, accent);
@@ -146,6 +169,17 @@ public final class ChunkListScreen extends Screen {
         mapX = listX + listW + u(12); mapY = listY; mapW = wx + ww - u(12) - mapX; mapH = listH - u(96);
         drawMap(g, list, accent);
         drawDetails(g, mapX, mapY + mapH + u(8), mapW, u(88), accent);
+        drawGrip(g, accent);
+    }
+
+    /** Diagonal grip in the bottom-right corner; drag it to resize the window. */
+    private void drawGrip(GuiGraphicsExtractor g, int accent) {
+        int size = u(14), right = wx + ww, bottom = wy + wh;
+        boolean hov = drag == Drag.RESIZE || inside(mx, my, right - size, bottom - size, size, size);
+        int c = hov ? accent : 0x50FFFFFF, d = Math.max(2, S), step = u(4);
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j <= i; j++)
+                round(g, right - u(6) - j * step - d, bottom - u(6) - (i - j) * step - d, d, d, d / 2, c);
     }
 
     private void drawList(GuiGraphicsExtractor g, List<Found> list, int top, int h, float dt, int accent) {
@@ -194,36 +228,46 @@ public final class ChunkListScreen extends Screen {
         round(g, mapX, mapY, mapW, mapH, u(16), 0xC006080E);
         outline(g, mapX, mapY, mapW, mapH, u(16), Math.max(1, S / 2), 0x22FFFFFF, 0x10FFFFFF);
         if (mc.player == null) return;
-        int c = u(cell), pcx = mc.player.getBlockX() >> 4, pcz = mc.player.getBlockZ() >> 4;
+        int c = u(cell);
+        float playerX = (float) (mc.player.getX() / 16.0), playerZ = (float) (mc.player.getZ() / 16.0);
+        float centerX = playerX + panX, centerZ = playerZ + panZ;
         int ccx = mapX + mapW / 2, ccy = mapY + mapH / 2;
-        int halfX = mapW / 2 / c + 1, halfZ = mapH / 2 / c + 1;
-        Map<Long, Found> byPos = new HashMap<>();
-        for (Found f : list) byPos.put(((long) f.cx() << 32) ^ (f.cz() & 0xFFFFFFFFL), f);
+        mapCx = ccx; mapCy = ccy; mapCell = c; mapCenterX = centerX; mapCenterZ = centerZ;
+        mapCells.clear();
+        for (Found f : list) mapCells.put(key(f.cx(), f.cz()), f);
+        int firstX = (int) Math.floor(centerX - mapW / 2f / c) - 1, lastX = (int) Math.ceil(centerX + mapW / 2f / c) + 1;
+        int firstZ = (int) Math.floor(centerZ - mapH / 2f / c) - 1, lastZ = (int) Math.ceil(centerZ + mapH / 2f / c) + 1;
+        boolean overMap = inside(mx, my, mapX, mapY, mapW, mapH) && drag != Drag.MAP;
         g.enableScissor(mapX + S, mapY + S, mapX + mapW - S, mapY + mapH - S);
-        for (int dx = -halfX; dx <= halfX; dx++)
-            for (int dz = -halfZ; dz <= halfZ; dz++) {
-                int x = ccx + dx * c - c / 2, y = ccy + dz * c - c / 2;
-                Found f = byPos.get(((long) (pcx + dx) << 32) ^ ((pcz + dz) & 0xFFFFFFFFL));
+        for (int cxk = firstX; cxk <= lastX; cxk++)
+            for (int czk = firstZ; czk <= lastZ; czk++) {
+                int x = ccx + Math.round((cxk - centerX) * c), y = ccy + Math.round((czk - centerZ) * c);
+                Found f = mapCells.get(key(cxk, czk));
                 if (f == null) {
                     if (c >= u(6)) fill(g, x, y, c - 1, c - 1, 0x0AFFFFFF);
                     continue;
                 }
-                boolean sel = f.equals(selected), hov = inside(mx, my, x, y, c, c);
+                boolean sel = f.equals(selected), hov = overMap && inside(mx, my, x, y, c, c);
                 fill(g, x, y, c - 1, c - 1, alpha(f.kind().color, sel ? 0xF0 : hov ? 0xD0 : 0x90));
-                hits.add(new Hit(x, y, c, c, b -> selected = f));
             }
         // you are here
-        circle(g, ccx, ccy, Math.max(u(3), c / 3), 0xFFFFFFFF);
+        int youX = ccx + Math.round((playerX - centerX) * c), youY = ccy + Math.round((playerZ - centerZ) * c);
+        circle(g, youX, youY, Math.max(u(3), c / 3), 0xFFFFFFFF);
         g.pose().pushMatrix();
-        g.pose().translate(ccx, ccy);
+        g.pose().translate(youX, youY);
         g.pose().rotate((float) Math.toRadians(mc.player.getYRot() + 180 - 45));
         icon(g, 0, 0, Icons.LOCATION_ARROW, accent);
         g.pose().popMatrix();
         if (selected != null) {
-            int x = ccx + (selected.cx() - pcx) * c - c / 2, y = ccy + (selected.cz() - pcz) * c - c / 2;
+            int x = ccx + Math.round((selected.cx() - centerX) * c), y = ccy + Math.round((selected.cz() - centerZ) * c);
             outline(g, x - S, y - S, c + 2 * S, c + 2 * S, u(2), Math.max(1, S), 0xFFFFFFFF, 0xFFFFFFFF);
         }
         g.disableScissor();
+        // back to the player after panning away
+        if (Math.abs(panX) > 0.5f || Math.abs(panZ) > 0.5f) {
+            int rw = pillWidth("Recenter");
+            pill(g, mapX + mapW - u(10) - rw, mapY + u(10), rw, u(22), "Recenter", Icons.LOCATION_ARROW, accent, () -> { panX = 0; panZ = 0; });
+        }
         // legend
         int lx = mapX + u(12), ly = mapY + mapH - u(16);
         for (Kind k : Kind.values()) {
@@ -231,7 +275,7 @@ public final class ChunkListScreen extends Screen {
             text(g, lx + u(12), ly, k.label, Theme.SUBTEXT, false);
             lx += textWidth(k.label, false) + u(28);
         }
-        textR(g, mapX + mapW - u(12), ly, "Scroll to zoom", Theme.DIM, false);
+        textR(g, mapX + mapW - u(12), ly, "Scroll to zoom   Drag to pan", Theme.DIM, false);
     }
 
     private void drawDetails(GuiGraphicsExtractor g, int x, int y, int w, int h, int accent) {
@@ -240,7 +284,7 @@ public final class ChunkListScreen extends Screen {
         int cy = y + u(20);
         long now = System.currentTimeMillis();
         boolean armed = now - clearArmedAt < 3000;
-        int cw = u(130), cx = x + w - u(12) - cw;
+        int cw = Math.max(pillWidth("Clear dimension"), pillWidth("Click to confirm")), cx = x + w - u(12) - cw;
         pill(g, cx, y + h - u(32), cw, u(22), armed ? "Click to confirm" : "Clear dimension", Icons.TRASH, armed ? Theme.DANGER : 0,
                 () -> {
                     if (armed) { module.clearHere(); selected = null; clearArmedAt = 0; Notifications.info("New Chunks", "Cleared this dimension"); }
@@ -256,15 +300,16 @@ public final class ChunkListScreen extends Screen {
         text(g, x + u(32), cy, f.kind().label + " chunk  " + f.cx() + ", " + f.cz(), Theme.TEXT, true);
         text(g, x + u(16), cy + u(16), "Blocks " + (f.cx() << 4) + ".." + ((f.cx() << 4) + 15) + ",  " + (f.cz() << 4) + ".." + ((f.cz() << 4) + 15)
                 + "   ·   found " + when(f.found()), Theme.MUTED, false);
-        int by = y + h - u(32), bw = u(96);
+        int by = y + h - u(32), bw = pillWidth("Waypoint"), copyW = pillWidth("Copy"), removeW = pillWidth("Remove");
+        int copyX = x + u(12) + bw + u(6), removeX = copyX + copyW + u(6);
         pill(g, x + u(12), by, bw, u(22), "Waypoint", Icons.LOCATION_DOT, accent, () ->
                 WaypointsModule.INSTANCE.add("Chunk_" + f.cx() + "_" + f.cz(), f.blockX(), Minecraft.getInstance().player == null ? 64
                         : Minecraft.getInstance().player.getBlockY(), f.blockZ()));
-        pill(g, x + u(12) + bw + u(6), by, u(76), u(22), "Copy", Icons.COPY, accent, () -> {
+        pill(g, copyX, by, copyW, u(22), "Copy", Icons.COPY, accent, () -> {
             minecraft.keyboardHandler.setClipboard(f.blockX() + " ~ " + f.blockZ());
             Notifications.success("New Chunks", "Copied " + f.blockX() + " ~ " + f.blockZ());
         });
-        pill(g, x + u(12) + bw + u(88), by, u(84), u(22), "Remove", Icons.XMARK, Theme.DANGER, () -> { module.remove(f); selected = null; });
+        pill(g, removeX, by, removeW, u(22), "Remove", Icons.XMARK, Theme.DANGER, () -> { module.remove(f); selected = null; });
     }
 
     // ------------------------------------------------------------------ widgets
@@ -283,11 +328,15 @@ public final class ChunkListScreen extends Screen {
         }
     }
 
+    /** Width a pill needs for its icon and label, with even padding on both sides. */
+    private static int pillWidth(String label) { return u(25) + textWidth(label, false) + u(12); }
+
+    private static long key(int cx, int cz) { return ((long) cx << 32) ^ (cz & 0xFFFFFFFFL); }
+
     /** Glass pill button; {@code color} 0 means a neutral button. */
     private void pill(GuiGraphicsExtractor g, int x, int y, int w, int h, String label, String glyph, int color, Runnable action) {
         boolean hov = inside(mx, my, x, y, w, h);
-        if (hov && color != 0) glassTint(g, x, y, w, h, h / 2, color, .8f);
-        else glass(g, x, y, w, h, h / 2, hov ? 0x28FFFFFF : 0x14FFFFFF, hov ? 1 : .4f);
+        liquidButton(g, x, y, w, h, hover("chunks:" + label, hov), false, color != 0 ? color : 0xFFFFFF, mx);
         icon(g, x + u(13), y + h / 2, glyph, hov ? 0xFFFFFFFF : Theme.SUBTEXT);
         text(g, x + u(25), y + h / 2, label, hov ? 0xFFFFFFFF : Theme.SUBTEXT, false);
         hits.add(new Hit(x, y, w, h, b -> action.run()));
@@ -304,11 +353,76 @@ public final class ChunkListScreen extends Screen {
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         int px = Math.round((float) event.x() * gs), py = Math.round((float) event.y() * gs);
+        int grip = u(14);
+        if (event.button() == 0 && inside(px, py, wx + ww - grip, wy + wh - grip, grip, grip)) {
+            drag = Drag.RESIZE;
+            grabX = wx + ww - px;
+            grabY = wy + wh - py;
+            return true;
+        }
         for (int i = hits.size() - 1; i >= 0; i--) {
             Hit h = hits.get(i);
             if (inside(px, py, h.x(), h.y(), h.w(), h.h())) { h.press().accept(event.button()); return true; }
         }
+        if (event.button() == 0 && inside(px, py, mapX, mapY, mapW, mapH)) {
+            // a click selects the chunk under the cursor; decided on release, since it may become a pan
+            drag = Drag.MAP;
+            mapMoved = false;
+            pressX = px;
+            pressY = py;
+            return true;
+        }
+        if (event.button() == 0 && inside(px, py, wx, wy, ww, headH)) {
+            drag = Drag.MOVE;
+            grabX = px - wx;
+            grabY = py - wy;
+            return true;
+        }
         return super.mouseClicked(event, doubleClick);
+    }
+
+    @Override
+    public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+        if (drag == Drag.NONE) return super.mouseDragged(event, dragX, dragY);
+        int pw = Math.round(width * gs), ph = Math.round(height * gs);
+        double px = event.x() * gs, py = event.y() * gs;
+        switch (drag) {
+            case MAP -> {
+                if (Math.abs(px - pressX) + Math.abs(py - pressY) > u(4)) mapMoved = true;
+                if (mapMoved && mapCell > 0) {
+                    panX -= (float) (dragX * gs / mapCell);
+                    panZ -= (float) (dragY * gs / mapCell);
+                }
+            }
+            case MOVE -> {
+                int maxX = Math.max(0, pw - ww), maxY = Math.max(0, ph - wh);
+                int nx = (int) Math.max(0, Math.min(maxX, px - grabX)), ny = (int) Math.max(0, Math.min(maxY, py - grabY));
+                GuiPreferences.setWindowPosition(WINDOW, maxX == 0 ? 0 : nx / (double) maxX, maxY == 0 ? 0 : ny / (double) maxY);
+            }
+            case RESIZE -> {
+                int nw = (int) Math.max(Math.min(u(MIN_W), pw), Math.min(pw - wx, px + grabX - wx));
+                int nh = (int) Math.max(Math.min(u(MIN_H), ph), Math.min(ph - wy, py + grabY - wy));
+                GuiPreferences.setWindowSize(WINDOW, Math.round(nw / (float) S), Math.round(nh / (float) S));
+                // keep the top-left corner where it is while the size changes
+                int maxX = Math.max(0, pw - nw), maxY = Math.max(0, ph - nh);
+                GuiPreferences.setWindowPosition(WINDOW, maxX == 0 ? 0 : wx / (double) maxX, maxY == 0 ? 0 : wy / (double) maxY);
+            }
+            default -> {}
+        }
+        return true;
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        if (drag == Drag.NONE) return super.mouseReleased(event);
+        if (drag == Drag.MAP && !mapMoved && mapCell > 0) {
+            int cxk = (int) Math.floor(mapCenterX + (pressX - mapCx) / mapCell);
+            int czk = (int) Math.floor(mapCenterZ + (pressY - mapCy) / mapCell);
+            Found f = mapCells.get(key(cxk, czk));
+            if (f != null) selected = f;
+        }
+        drag = Drag.NONE;
+        return true;
     }
 
     @Override

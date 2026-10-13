@@ -8,6 +8,8 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 
+import java.util.List;
+
 import static unblonded.anthrax.gui.Draw.*;
 
 /**
@@ -45,9 +47,19 @@ public final class HudEditorScreen extends Screen {
         int[] drawn = HudLayout.drawn(e.id());
         if (drawn != null) return new int[]{drawn[0], drawn[1], drawn[2], drawn[3], 1};
         int[] size = HudLayout.size(e.id());
-        // placeholders that were never moved line up in the middle so they are easy to grab
-        int col = index % 3, row = index / 3;
-        int defX = pw / 2 - u(330) + col * u(230), defY = ph / 2 - u(110) + row * u(60);
+        // blocks that are not showing right now sit where they would appear by default
+        int defX = Hud.defX(e.id(), pw, gs), defY = Hud.defY(e.id(), ph, gs);
+        List<String> stack = Hud.LEFT_STACK.contains(e.id()) ? Hud.LEFT_STACK : Hud.RIGHT_STACK.contains(e.id()) ? Hud.RIGHT_STACK : null;
+        if (stack != null) {
+            // continue the stack below the blocks ahead of it that were never moved
+            defY = u(6);
+            for (String id : stack) {
+                if (id.equals(e.id())) break;
+                if (HudLayout.hasSaved(id)) continue;
+                int[] d = HudLayout.drawn(id);
+                defY = Math.max(defY, (d != null ? d[1] + d[3] : defY + HudLayout.size(id)[1]) + u(6));
+            }
+        }
         int[] at = HudLayout.place(e.id(), size[0], size[1], pw, ph, defX, defY);
         return new int[]{at[0], at[1], size[0], size[1], 0};
     }
@@ -114,7 +126,7 @@ public final class HudEditorScreen extends Screen {
         barH = u(34);
         int barW = Math.min(pw - u(20), u(560)), barX = (pw - barW) / 2, barY = u(8);
         shadow(g, barX, barY, barW, barH, barH / 2, u(10), 0x50);
-        glass(g, barX, barY, barW, barH, barH / 2, alpha(0x0E1119, 0xD8), 1f);
+        canvas(g, barX, barY, barW, barH, barH / 2);
         icon(g, barX + u(18), barY + barH / 2, Icons.ARROWS_UP_DOWN_LEFT_RIGHT, accent);
         text(g, barX + u(32), barY + barH / 2, "HUD LAYOUT", Theme.TEXT, true);
         text(g, barX + u(32) + textWidth("HUD LAYOUT", true) + u(10), barY + barH / 2,
@@ -131,8 +143,9 @@ public final class HudEditorScreen extends Screen {
 
     private void pill(GuiGraphicsExtractor g, int x, int y, int w, int h, String label, int color) {
         boolean hov = inside(mx, my, x, y, w, h);
-        glass(g, x, y, w, h, h / 2, hov ? alpha(color, 0x80) : alpha(0xFFFFFF, 0x18), hov ? 1f : 0.5f);
-        textC(g, x + w / 2, y + h / 2, label, hov ? 0xFFFFFFFF : Theme.SUBTEXT, true);
+        float k = hover("hudedit:" + label, hov);
+        liquidButton(g, x, y, w, h, k, false, color, mx);
+        textC(g, x + w / 2, y + h / 2, label, lerp(Theme.SUBTEXT, 0xFFFFFFFF, k), true);
     }
 
     /** Topmost block under the mouse (later elements draw on top). */

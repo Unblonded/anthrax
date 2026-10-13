@@ -18,6 +18,15 @@ import unblonded.anthrax.modules.Setting;
 public final class ClientSettingsModule extends FeatureModule {
     public static final ClientSettingsModule INSTANCE = new ClientSettingsModule();
 
+    // stored in the GUI preferences like before; these just edit them from the settings page
+    private final Setting.Mode theme = setting(new Setting.Mode("Theme", GuiPreferences.themeNames(),
+            GuiPreferences::theme, GuiPreferences::setTheme), "Accent color for the menu and HUD. Rainbow cycles through every hue.");
+    private final Setting.Mode effects = setting(new Setting.Mode("Effects", GuiPreferences.effectNames(),
+            GuiPreferences::effects, GuiPreferences::setEffects),
+            "Lite: no blur or effects, fastest. Balanced: blur and glass with light effects. Max: every effect, heaviest.");
+
+    private final Setting.Bool customTitle = setting(Setting.Bool.standalone("Custom title screen", true),
+            "Replaces the Minecraft title screen (Singleplayer, Multiplayer, Options) with the Anthrax one.");
     private final Setting.Key menuKey = setting(Setting.Key.standalone("Open menu key", GLFW.GLFW_KEY_RIGHT_SHIFT,
             () -> Minecraft.getInstance().gui.setScreen(new AnthraxScreen())),
             "Opens this menu. Press it again inside the menu to close it.");
@@ -69,6 +78,7 @@ public final class ClientSettingsModule extends FeatureModule {
         }
         Notifications.warn("Panic", "Turned off " + n + " module" + (n == 1 ? "" : "s"));
     }
+    public boolean customTitle() { return customTitle.get(); }
     public boolean onlyEnabled() { return onlyEnabled.get(); }
     public void setOnlyEnabled(boolean value) { onlyEnabled.set(value); }
 }

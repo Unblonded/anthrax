@@ -99,6 +99,23 @@ public final class GuiPreferences {
 
     public static boolean onboarded() { return onboarded; }
     public static void setOnboarded(boolean value) { onboarded = value; }
+
+    // ---- appearance, exposed for the Client Settings page
+    private static final String[] EFFECT_NAMES = {"Lite", "Balanced", "Max"};
+
+    public static java.util.List<String> themeNames() { return java.util.List.of(Theme.NAMES); }
+    public static String theme() { return Theme.NAMES[Theme.idx]; }
+    public static void setTheme(String name) {
+        int i = java.util.Arrays.asList(Theme.NAMES).indexOf(name);
+        if (i >= 0) Theme.idx = i;
+    }
+
+    public static java.util.List<String> effectNames() { return java.util.List.of(EFFECT_NAMES); }
+    public static String effects() { return EFFECT_NAMES[Draw.FX]; }
+    public static void setEffects(String name) {
+        int i = java.util.Arrays.asList(EFFECT_NAMES).indexOf(name);
+        if (i >= 0) Draw.setFx(i);
+    }
     public static String lastCategory() { return lastCategory; }
     public static void setLastCategory(String category) { lastCategory = category == null ? "" : category; }
     public static boolean separateCategoryWindows() { return separateCategoryWindows; }

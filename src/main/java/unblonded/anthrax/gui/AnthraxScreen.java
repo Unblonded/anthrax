@@ -152,7 +152,9 @@ public class AnthraxScreen extends Screen {
      * contentHeight is kept too, or the first frame would clamp the restored scroll back to the top.
      */
     private static float scroll, scrollTarget, contentHeight;
+    /** Selector position relative to the sidebar (so switching tabs springs), and where the sidebar was last frame. */
     private float tabY = -1, tabV;
+    private float tabAnchorX = Float.NaN, tabAnchorY;
     /** Per-setting animation state: [0] value position, [1] hover, [2] spring velocity. */
     private final Map<Setting, float[]> settingAnim = new IdentityHashMap<>();
     private Setting.Num draggingSlider;
@@ -315,7 +317,7 @@ public class AnthraxScreen extends Screen {
         int wy = Math.round((float) (storedMain[1] * maxWY));
         int introOffset = Math.round((1f - open) * u(24));
         wy += introOffset;
-        int r = u(24);
+        int r = u(R_WINDOW);
         int headerH = u(52), sideW = u(136), footH = u(30);
         int ix = wx, iw = ww;
         int footTop = wy + wh - footH;
@@ -329,7 +331,7 @@ public class AnthraxScreen extends Screen {
         g.pose().translate(-(wx + ww / 2f), -(wy + wh / 2f));
         try {
             shadow(g, wx, wy, ww, wh, r, u(22), (int) (0x70 * open));
-            glass(g, wx, wy, ww, wh, r, alpha(0x0E1119, 0xB4), 1f);
+            canvas(g, wx, wy, ww, wh, r);
             if (FX >= 2) drawCursorLight(g, wx, wy, ww, wh);
             drawRimSweep(g, wx, wy, ww, r, ms, introT);
 
@@ -337,7 +339,9 @@ public class AnthraxScreen extends Screen {
             fill(g, wx + r, footTop, ww - 2 * r, Math.max(1, S / 2), 0x10FFFFFF);
 
             final int dragOffsetX = mx - wx, dragOffsetY = my - wy;
-            hit(wx + u(8), wy + u(4), u(150), headerH - u(8), false, null, (px, py) -> {
+            // the whole header strip drags the window: it is registered before the header's controls, and
+            // later hits win, so search, help and close still get their own clicks
+            hit(wx, wy, ww, headerH, false, null, (px, py) -> {
                 int nx = Math.max(0, Math.min(maxWX, px - dragOffsetX));
                 int ny = Math.max(0, Math.min(maxWY, py - dragOffsetY - introOffset));
                 GuiPreferences.setWindowPosition("__main", maxWX == 0 ? 0 : nx / (double) maxWX,
@@ -429,28 +433,18 @@ public class AnthraxScreen extends Screen {
         int fpsCol = fps >= 60 ? Theme.OK : fps >= 30 ? 0xFFFFC94A : Theme.DANGER;
         int bh = u(26);
         int closeX = ix + iw - u(16) - bh;
-        int themeW = u(84);
-        int themeX = closeX - u(8) - themeW;
-        int fxW = u(46);
-        int fxX = themeX - u(6) - fxW;
-        int helpX = fxX - u(6) - bh;
+        int helpX = closeX - u(8) - bh;
         iconButton(g, helpX, cy - bh / 2, bh, Icons.CIRCLE_QUESTION, accent, () -> tourPage = 0);
-        // the search box shrinks and the FPS chip hides as the window gets narrower
-        int space = helpX - u(10) - (ix + u(166));
-        boolean showChip = space >= u(170 + 68);
-        int searchW = Math.max(u(90), Math.min(u(170), space - (showChip ? u(68) : 0)));
-        drawSearch(g, ix + u(166), cy, searchW, accent);
-        if (showChip) chip(g, ix + u(166) + searchW + u(8), cy, u(60), fpsText, fpsCol);
+        // the FPS chip sits against the help button; the search box fills the room between it and the title
+        // (up to a comfortable reading width), and the chip hides first when the window gets narrow
+        int searchX = ix + u(166), chipW = u(60), chipX = helpX - u(SP_S) - chipW;
+        int space = helpX - u(10) - searchX;
+        boolean showChip = space >= u(120) + chipW + u(SP_S);
+        int room = (showChip ? chipX - u(SP_S) : helpX - u(10)) - searchX;
+        int searchW = Math.max(u(90), Math.min(u(420), room));
+        drawSearch(g, searchX, cy, searchW, accent);
+        if (showChip) chip(g, chipX, cy, chipW, fpsText, fpsCol);
 
-        button(g, fxX, cy - bh / 2, fxW, bh, FX_NAMES[FX], accent, () -> {
-            Draw.setFx(Draw.FX + 1);
-            toast("Effects", FX_LONG[Draw.FX], false);
-        });
-        button(g, themeX, cy - bh / 2, themeW, bh, Theme.NAMES[Theme.idx], accent, () -> {
-            Theme.next();
-            toast("Theme", Theme.NAMES[Theme.idx], false);
-        });
-        circle(g, themeX + u(12), cy, u(4), accent);
         iconButton(g, closeX, cy - bh / 2, bh, Icons.XMARK, Theme.DANGER, this::onClose);
     }
 
@@ -486,7 +480,7 @@ public class AnthraxScreen extends Screen {
         }
     }
 
-    private boolean searching() { return !search.isBlank() && !GuiPreferences.separateCategoryWindows(); }
+    private boolean searching() { return !search.isBlank(); }
 
     /** Modules whose name, description, category or setting names contain every typed word. */
     private List<GuiModule> searchResults() {
@@ -518,7 +512,7 @@ public class AnthraxScreen extends Screen {
             case "World" -> Icons.MAP_LOCATION_DOT;
             case "Visuals" -> Icons.EYE;
             case "Utility" -> Icons.SCREWDRIVER_WRENCH;
-            case "Client" -> Icons.SLIDERS;
+            case SETTINGS_CATEGORY -> Icons.GEAR;
             default -> Icons.LAYER_GROUP;
         };
     }
@@ -531,21 +525,21 @@ public class AnthraxScreen extends Screen {
         textC(g, x + w / 2 + u(5), cy, s, Theme.SUBTEXT, false);
     }
 
-    /** Glass pill button: lifts and catches light on hover, tints with its color while pressed. */
+    /** Liquid-glass pill button: a clear rim at rest; fills, shimmers and tints with its color on hover. */
     private void button(GuiGraphicsExtractor g, int x, int y, int w, int h, String label, int hoverCol, Runnable action) {
         boolean hov = inside(mx, my, x, y, w, h);
         boolean down = hov && mouseDown();
-        if (hov && FANCY) roundFast(g, x - u(3), y - u(2), w + u(6), h + u(6), h / 2 + u(3), alpha(hoverCol, 0x18));
-        glass(g, x, y + (down ? S : 0), w, h, h / 2,
-                down ? alpha(hoverCol, 0x50) : hov ? alpha(0xFFFFFF, 0x26) : alpha(0xFFFFFF, 0x14), hov ? 1f : 0.4f);
-        textC(g, x + w / 2, y + h / 2 + (down ? S : 0), label, hov ? 0xFFFFFFFF : Theme.SUBTEXT, false);
+        float k = hover("btn:" + label, hov);
+        liquidButton(g, x, y + (down ? S : 0), w, h, k, down, hoverCol, mx);
+        textC(g, x + w / 2, y + h / 2 + (down ? S : 0), label, lerp(Theme.SUBTEXT, 0xFFFFFFFF, k), false);
         hit(x, y, w, h, false, b -> action.run(), null);
     }
 
     private void iconButton(GuiGraphicsExtractor g, int x, int y, int size, String glyph, int hoverCol, Runnable action) {
         boolean hov = inside(mx, my, x, y, size, size);
-        glass(g, x, y, size, size, size / 2, hov ? alpha(hoverCol, 0x90) : alpha(0xFFFFFF, 0x14), hov ? 1f : 0.4f);
-        icon(g, x + size / 2, y + size / 2, glyph, hov ? 0xFFFFFFFF : Theme.SUBTEXT);
+        float k = hover("icon:" + glyph, hov);
+        liquidButton(g, x, y, size, size, k, false, hoverCol, mx);
+        icon(g, x + size / 2, y + size / 2, glyph, lerp(Theme.SUBTEXT, 0xFFFFFFFF, k));
         hit(x, y, size, size, false, b -> action.run(), null);
     }
 
@@ -564,6 +558,8 @@ public class AnthraxScreen extends Screen {
     //  sidebar
     // =====================================================================
     private final float[] tabVel = new float[1];
+    /** Velocities of the selector's lag behind the window while it is dragged: [0] x, [1] y. */
+    private final float[] anchorVel = new float[2];
 
     private void drawSidebar(GuiGraphicsExtractor g, int ix, int top, int bottom, int sideW, int accent, int accent2, float dt, long ms) {
         category = Math.max(0, Math.min(category, Math.max(0, cats.size() - 1)));
@@ -576,22 +572,33 @@ public class AnthraxScreen extends Screen {
         int tabH = u(32), gap = u(4);
         int x = px + u(6), w = pw - u(12);
         int y0 = py + u(30);
+        // Settings is pinned above the active-modules gauge, apart from the module categories
+        int settingsIdx = cats.indexOf(SETTINGS_CATEGORY);
+        int settingsY = py + ph - u(30) - u(16) - tabH;
 
         // the selection is a glass drop that springs between tabs (with a little overshoot)
         boolean searching = searching();
-        float target = y0 + category * (tabH + gap);
+        float target = (category == settingsIdx ? settingsY : y0 + slot(category, settingsIdx) * (tabH + gap)) - y0;
         if (tabY < 0) tabY = target;
-        tabY = spring(tabY, target, tabVel, 0, dt, 260f, 22f);
-        int ty = Math.round(tabY);
+        // tab switch: a short slide with one small overshoot (damping ratio ~0.87)
+        tabY = spring(tabY, target, tabVel, 0, dt, 300f, 30f);
+        // dragging the window: the selector stays locked horizontally and only trails vertically, on a
+        // near-critically damped spring (ratio ~0.9), so it gives a slight give and settles at once
+        if (Float.isNaN(tabAnchorX)) tabAnchorY = y0;
+        tabAnchorX = x;
+        tabAnchorY = spring(tabAnchorY, y0, anchorVel, 1, dt, 600f, 44f);
+        int tx0 = x, ty = Math.round(tabAnchorY + tabY);
         float stretch = Math.min(1f, Math.abs(tabVel[0]) / (u(900)));
         int dropH = tabH + Math.round(stretch * u(8));
         if (!searching) {
-            if (FANCY) roundFast(g, x - u(2), ty - u(2) - (dropH - tabH) / 2, w + u(4), dropH + u(4), u(14), alpha(accent, 0x1C));
-            glassTint(g, x, ty - (dropH - tabH) / 2, w, dropH, tabH / 2, accent, 0.55f);
+            if (FANCY) roundFast(g, tx0 - u(2), ty - u(2) - (dropH - tabH) / 2, w + u(4), dropH + u(4), u(14), alpha(accent, 0x1C));
+            glassTint(g, tx0, ty - (dropH - tabH) / 2, w, dropH, tabH / 2, accent, 0.55f);
         }
 
+        if (settingsIdx >= 0) fill(g, x + u(8), settingsY - u(8), w - u(16), Math.max(1, S / 2), 0x14FFFFFF);
         for (int i = 0; i < cats.size(); i++) {
-            int y = y0 + i * (tabH + gap);
+            boolean pinned = i == settingsIdx;
+            int y = pinned ? settingsY : y0 + slot(i, settingsIdx) * (tabH + gap);
             boolean sel = i == category && !searching;
             boolean hov = inside(mx, my, x, y, w, tabH);
             if (!sel && hov) round(g, x, y, w, tabH, tabH / 2, 0x12FFFFFF);
@@ -599,10 +606,12 @@ public class AnthraxScreen extends Screen {
             int tx = x + u(12) + (hov && !sel ? u(2) : 0);
             icon(g, tx + u(6), y + tabH / 2, categoryIcon(cats.get(i)), sel ? 0xFFFFFFFF : hov ? Theme.SUBTEXT : Theme.MUTED);
             tx += u(20);
-            text(g, tx, y + tabH / 2, cats.get(i), sel ? 0xFFFFFFFF : Theme.SUBTEXT, sel);
-            int countW = u(20), countH = u(16);
-            round(g, x + w - u(8) - countW, y + (tabH - countH) / 2, countW, countH, countH / 2, sel ? 0x30FFFFFF : 0x14FFFFFF);
-            textC(g, x + w - u(8) - countW / 2, y + tabH / 2, catCountText[i], sel ? 0xFFFFFFFF : Theme.MUTED, false);
+            text(g, tx, y + tabH / 2, pinned ? "Settings" : cats.get(i), sel ? 0xFFFFFFFF : Theme.SUBTEXT, sel);
+            if (!pinned) {
+                int countW = u(20), countH = u(16);
+                round(g, x + w - u(8) - countW, y + (tabH - countH) / 2, countW, countH, countH / 2, sel ? 0x30FFFFFF : 0x14FFFFFF);
+                textC(g, x + w - u(8) - countW / 2, y + tabH / 2, catCountText[i], sel ? 0xFFFFFFFF : Theme.MUTED, false);
+            }
 
             final int idx = i;
             hit(x, y, w, tabH, false, b -> {
@@ -663,22 +672,32 @@ public class AnthraxScreen extends Screen {
 
     private void drawDetachedWindows(GuiGraphicsExtractor g, int pw, int ph, float dt, long ms, long nowNs,
                                      float open, int accent, int accent2) {
-        int barH = u(36), barW = u(470), barX = (pw - barW) / 2, barY = u(12);
+        int barH = u(36), barW = Math.min(pw - 2 * u(SP_M), u(720)), barX = (pw - barW) / 2, barY = u(12);
         shadow(g, barX, barY, barW, barH, barH / 2, u(10), 0x50);
-        glass(g, barX, barY, barW, barH, barH / 2, alpha(0x0E1119, 0xB4), 1f);
+        canvas(g, barX, barY, barW, barH, barH / 2);
         icon(g, barX + u(18), barY + barH / 2, Icons.TABLE_COLUMNS, accent);
-        text(g, barX + u(32), barY + barH / 2, "Category windows", Theme.TEXT, true);
+        String barTitle = "Category windows";
+        text(g, barX + u(32), barY + barH / 2, barTitle, Theme.TEXT, true);
         int bh = barH - u(12), by = barY + u(6);
-        int tabX = barX + barW - u(6) - u(100), layoutX = tabX - u(6) - u(100), fxX = layoutX - u(6) - u(50);
-        button(g, fxX, by, u(50), bh, FX_NAMES[FX], accent, () -> {
-            Draw.setFx(Draw.FX + 1);
-            toast("Effects", FX_LONG[Draw.FX], false);
-        });
+        int tabX = barX + barW - u(6) - u(100), layoutX = tabX - u(6) - u(100);
         button(g, layoutX, by, u(100), bh, "HUD Layout", accent, this::openHudEditor);
+        // search filters every window down to its matching modules; windows with no match step aside
+        int searchX = barX + u(32) + textWidth(barTitle, true) + u(SP_M);
+        int searchW = Math.max(u(90), layoutX - u(SP_S) - searchX);
+        drawSearch(g, searchX, barY + barH / 2, searchW, accent);
         button(g, tabX, by, u(100), bh, "Tabbed view", accent,
                 () -> GuiPreferences.setSeparateCategoryWindows(false));
 
+        detachedRects.clear();
         if (cats.isEmpty()) return;
+        boolean searching = searching();
+        java.util.Set<GuiModule> matches = searching ? java.util.Collections.newSetFromMap(new IdentityHashMap<>()) : null;
+        if (searching) matches.addAll(searchResults());
+        if (searching && matches.isEmpty()) {
+            icon(g, pw / 2, barY + barH + u(40), Icons.MAGNIFYING_GLASS, Theme.DIM);
+            textC(g, pw / 2, barY + barH + u(62), "No modules match \"" + search.trim() + "\"", Theme.MUTED, false);
+            return;
+        }
         int gap = u(10), maxW = u(260), margin = u(10), top = barY + barH + u(10);
         int columns = Math.max(1, Math.min(cats.size(), Math.max(1, (pw - 2 * margin + gap) / (maxW + gap))));
         int defW = Math.min(maxW, Math.max(u(160), (pw - 2 * margin - gap * (columns - 1)) / columns));
@@ -693,7 +712,14 @@ public class AnthraxScreen extends Screen {
             int[] savedSize = GuiPreferences.windowSize(key);
             int ww = Math.max(Math.min(u(CAT_MIN_W), pw), Math.min(pw, savedSize == null ? defW : u(savedSize[0])));
             int fullH = Math.max(Math.min(u(CAT_MIN_H), ph), Math.min(ph, savedSize == null ? defH : u(savedSize[1])));
-            boolean collapsed = GuiPreferences.collapsed(key);
+            List<GuiModule> shown = catMods.get(i);
+            if (searching) {
+                shown = new ArrayList<>();
+                for (GuiModule m : catMods.get(i)) if (matches.contains(m)) shown.add(m);
+                if (shown.isEmpty()) continue;
+            }
+            // while searching, collapsed windows open up so their matches are visible
+            boolean collapsed = GuiPreferences.collapsed(key) && !searching;
             int wh = collapsed ? headerH : fullH;
             int defaultX = margin + (i % columns) * (defW + gap);
             int defaultY = top + (i / columns) * (defH + gap);
@@ -706,19 +732,19 @@ public class AnthraxScreen extends Screen {
             }
             int x = Math.round((float) (saved[0] * maxX));
             int y = Math.round((float) (saved[1] * maxY));
-            drawDetachedWindow(g, i, cat, x, y, ww, wh, fullH, collapsed, headerH, maxX, maxY, pw, ph, dt, ms, nowNs, accent, accent2);
+            drawDetachedWindow(g, i, cat, shown, x, y, ww, wh, fullH, collapsed, headerH, maxX, maxY, pw, ph, dt, ms, nowNs, accent, accent2);
         }
     }
 
-    private void drawDetachedWindow(GuiGraphicsExtractor g, int index, String cat, int x, int y, int w, int h, int fullH,
-                                    boolean collapsed, int headerH, int maxX, int maxY, int pw, int ph, float dt, long ms,
+    private void drawDetachedWindow(GuiGraphicsExtractor g, int index, String cat, List<GuiModule> mods, int x, int y, int w, int h,
+                                    int fullH, boolean collapsed, int headerH, int maxX, int maxY, int pw, int ph, float dt, long ms,
                                     long nowNs, int accent, int accent2) {
         String key = catKeys[index];
-        List<GuiModule> mods = catMods.get(index);
         // the whole window catches clicks first (lowest priority), so a click anywhere raises it
         hit(x, y, w, h, false, b -> GuiPreferences.bringToFront(cat), null);
-        shadow(g, x, y, w, h, u(18), u(14), 0x60);
-        glass(g, x, y, w, h, collapsed ? headerH / 2 : u(18), alpha(0x0E1119, 0xB4), 1f);
+        int winR = collapsed ? headerH / 2 : u(R_WINDOW);
+        shadow(g, x, y, w, h, winR, u(14), 0x60);
+        canvas(g, x, y, w, h, winR);
         if (!collapsed) fill(g, x + u(14), y + headerH, w - u(28), Math.max(1, S / 2), 0x16FFFFFF);
         icon(g, x + u(16), y + headerH / 2, categoryIcon(cat), accent);
         text(g, x + u(30), y + headerH / 2, fitText(cat, w - u(30) - u(100), true), Theme.TEXT, true);
@@ -807,10 +833,17 @@ public class AnthraxScreen extends Screen {
     // =====================================================================
     //  content (cards generated from ModuleRegistry)
     // =====================================================================
+    /** Row of a module category in the sidebar list, which skips the pinned Settings tab. */
+    private static int slot(int index, int settingsIdx) { return settingsIdx >= 0 && index > settingsIdx ? index - 1 : index; }
+
     private void drawContent(GuiGraphicsExtractor g, int ix, int iw, int top, int bottom,
                              int sideW, int accent, int accent2, float dt, long ms, long nowNs) {
         if (cats.isEmpty() || category >= catMods.size()) return;
         boolean searching = searching();
+        if (!searching && SETTINGS_CATEGORY.equals(cats.get(category))) {
+            drawSettingsPage(g, ix, iw, top, bottom, sideW, accent, accent2, dt, ms, nowNs);
+            return;
+        }
         String cat = searching ? "Search results" : cats.get(category);
         List<GuiModule> mods = searching ? searchResults() : catMods.get(category);
 
@@ -862,6 +895,84 @@ public class AnthraxScreen extends Screen {
             textC(g, vx + vw / 2, vy + u(62), "No modules match \"" + search.trim() + "\"", Theme.MUTED, false);
         }
 
+        if (contentHeight > vh) {
+            int barH = Math.max(u(24), Math.round(vh * (vh / contentHeight)));
+            int barY = vy + Math.round((vh - barH) * (scroll / Math.max(1f, contentHeight - vh)));
+            round(g, vx + vw + u(6), barY, u(3), barH, u(2), 0x50FFFFFF);
+        }
+    }
+
+    /** The modules in this category are client options; the menu shows them as one flat Settings page. */
+    private static final String SETTINGS_CATEGORY = "Client";
+
+    /**
+     * Settings page: every client option laid out directly, one glass panel per group (General first),
+     * instead of module cards. Groups that can be switched off carry their switch in the group header.
+     */
+    private void drawSettingsPage(GuiGraphicsExtractor g, int ix, int iw, int top, int bottom,
+                                  int sideW, int accent, int accent2, float dt, long ms, long nowNs) {
+        List<GuiModule> groups = new ArrayList<>(catMods.get(category));
+        groups.sort(java.util.Comparator.comparing((GuiModule m) -> !m.name.equals("Client Settings")));
+
+        vx = ix + sideW + u(10);
+        vw = iw - sideW - u(28);
+        vy = top + u(40);
+        vh = bottom - vy - u(8);
+        spotCards = new int[]{vx, vy, vw, vh};
+        text(g, vx + u(2), top + u(22), "Settings", Theme.TEXT, true);
+        textR(g, vx + vw, top + u(22), "Saved automatically", Theme.MUTED, false);
+
+        float maxScroll = Math.max(0, contentHeight - vh);
+        scrollTarget = Math.max(0, Math.min(scrollTarget, maxScroll));
+        scroll += (scrollTarget - scroll) * Math.min(1f, dt * 14f);
+        if (Math.abs(scrollTarget - scroll) < 0.5f) scroll = scrollTarget;
+        float catT = (nowNs - catNs) / 1_000_000_000f;
+
+        g.enableScissor(vx, vy, vx + vw, vy + vh);
+        int headH = u(SP_XL + SP_L), pad = u(SP_S), gap = u(SP_L);
+        int cursor = vy - Math.round(scroll), total = 0, index = 0;
+        for (GuiModule m : groups) {
+            List<Setting> rows = m.settings();
+            boolean general = m.name.equals("Client Settings");
+            int body = 0;
+            for (Setting s : rows) body += rowHeight(s);
+            int panelH = rows.isEmpty() ? 0 : body + 2 * pad;
+            int blockH = headH + panelH;
+            float ap = easeOut((catT - 0.06f * index - 0.1f) / 0.35f);
+            int y = cursor + Math.round((1f - ap) * u(14));
+            if (ap > 0.01f && y + blockH >= vy && y <= vy + vh) {
+                // group header: name and what it covers; a switch when the group can be turned off
+                int cy = y + headH / 2;
+                String title = general ? "General" : m.name;
+                text(g, vx + u(4), cy - u(7), title, Theme.TEXT, true);
+                int descMax = vw - u(4) - (general ? 0 : u(56));
+                text(g, vx + u(4), cy + u(8), fitText(general ? "Menu, keys and interface" : m.description, descMax, false), Theme.MUTED, false);
+                if (!general) {
+                    int tw = u(34), th = u(19), tx = vx + vw - tw - u(4);
+                    toggle(g, tx, cy - th / 2, tw, th, hover("group:" + m.name, m.isEnabled()), accent);
+                    hit(tx - u(4), cy - th / 2 - u(4), tw + u(8), th + u(8), true, b -> {
+                        m.toggle();
+                        activeStamp = -1000L;
+                        unblonded.anthrax.modules.client.ClientSettingsModule.toggled(m.name, m.isEnabled());
+                    }, null);
+                }
+                if (panelH > 0) {
+                    int py0 = y + headH;
+                    glass(g, vx, py0, vw, panelH, u(R_CARD), 0x0CFFFFFF, 0.4f);
+                    int ry = py0 + pad;
+                    for (Setting s : rows) {
+                        int rh = rowHeight(s);
+                        drawSetting(g, s, vx, ry, vw, rh, accent, accent2, ap > 0.9f, ms);
+                        ry += rh;
+                    }
+                }
+            }
+            cursor += blockH + gap;
+            total += blockH + gap;
+            index++;
+        }
+        g.disableScissor();
+        contentHeight = Math.max(0, total - gap);
         if (contentHeight > vh) {
             int barH = Math.max(u(24), Math.round(vh * (vh / contentHeight)));
             int barY = vy + Math.round((vh - barH) * (scroll / Math.max(1f, contentHeight - vh)));
@@ -1056,7 +1167,7 @@ public class AnthraxScreen extends Screen {
         boolean dirty = !allDefault(m);
         int bw = u(74), bh = u(18), bx = x + w - pad - bw, by = cy - bh / 2;
         boolean hov = interactive && dirty && inside(mx, my, bx, by, bw, bh) && inside(mx, my, vx, vy, vw, vh);
-        glass(g, bx, by, bw, bh, bh / 2, hov ? alpha(Theme.DANGER, 0x60) : 0x12FFFFFF, hov ? 0.9f : 0.3f);
+        liquidButton(g, bx, by, bw, bh, hover("reset:" + m.name, hov), false, Theme.DANGER, mx);
         icon(g, bx + u(12), cy, Icons.ROTATE_LEFT, dirty ? (hov ? Theme.DANGER : Theme.MUTED) : Theme.DIM);
         text(g, bx + u(22), cy, "Reset all", dirty ? (hov ? Theme.TEXT : Theme.SUBTEXT) : Theme.DIM, false);
         if (interactive && dirty) hit(bx, by, bw, bh, true, b -> {
@@ -1185,7 +1296,7 @@ public class AnthraxScreen extends Screen {
                 int bw = Math.max(u(100), Math.min(u(150), maxOptionWidth(md) + u(40))), bh = segH, bx = rx - bw, by = y + (rh - bh) / 2;
                 labelMax = Math.max(0, bx - u(28) - lx);
                 boolean hov = interactive && inside(mx, my, bx, by, bw, bh) && inside(mx, my, vx, vy, vw, vh);
-                glass(g, bx, by, bw, bh, bh / 2, hov ? 0x26FFFFFF : 0x16FFFFFF, hov ? 0.9f : 0.4f);
+                liquidButton(g, bx, by, bw, bh, hover("mode:" + md.name, hov), false, 0xFFFFFF, mx);
                 textC(g, bx + bw / 2, by + bh / 2, fitText(md.get(), bw - u(36), false), 0xFFFFFFFF, false);
                 icon(g, bx + u(11), by + bh / 2, Icons.ANGLE_LEFT, hov ? accent : Theme.MUTED);
                 icon(g, bx + bw - u(11), by + bh / 2, Icons.ANGLE_RIGHT, hov ? accent : Theme.MUTED);
@@ -1211,7 +1322,7 @@ public class AnthraxScreen extends Screen {
             if (Float.isNaN(a[0])) a[0] = frac;
             a[0] = spring(a[0], frac, a, 2, dt, 420f, 32f);
             float shownFrac = Math.max(0f, Math.min(1f, a[0]));
-            round(g, trackX, trackY, trackW, trackH, trackH / 2, 0x26FFFFFF);
+            track(g, trackX, trackY, trackW, trackH);
             int fw = Math.max(trackH, Math.round(trackW * shownFrac));
             pillGrad(g, trackX, trackY, fw, trackH, accent, accent2);
             boolean dragging = draggingSlider == n && activeDrag != null;
@@ -1268,8 +1379,7 @@ public class AnthraxScreen extends Screen {
             boolean hov = interactive && inside(mx, my, bx, by, bw, bh) && inside(mx, my, vx, vy, vw, vh);
             boolean pressed = hov && activeDrag == null && mouseDown();
             int ay = by + (pressed ? S : 0);
-            if (hov && FANCY) roundFast(g, bx - u(3), ay - u(2), bw + u(6), bh + u(6), bh / 2 + u(3), alpha(accent, 0x22));
-            glassTint(g, bx, ay, bw, bh, bh / 2, accent, pressed ? 1f : hov ? 0.7f : 0.25f);
+            liquidButton(g, bx, ay, bw, bh, Math.max(0.3f, hover("action:" + action.name, hov)), pressed, accent, mx);
             textC(g, bx + bw / 2, ay + bh / 2, fitText(action.name, bw - u(16), false), 0xFFFFFFFF, hov);
             if (interactive) hit(bx, by, bw, bh, true, btn -> action.run(), null);
         }
@@ -1314,7 +1424,7 @@ public class AnthraxScreen extends Screen {
             new TourPage(Icons.MAGNIFYING_GLASS, "Find anything",
                     "Just start typing to search every module and setting. Enter toggles the top result, Ctrl+F jumps to the search box.", SPOT_SEARCH),
             new TourPage(Icons.PALETTE, "Make it yours",
-                    "HUD Layout lets you drag every HUD block anywhere. Windows splits categories into movable, resizable windows. Theme and FX in the header change the look, and the corner grip resizes this window.", SPOT_FOOTER),
+                    "HUD Layout lets you drag every HUD block anywhere. Windows splits categories into movable, resizable windows. Theme and effects live under Settings at the bottom of the sidebar, and the corner grip resizes this window.", SPOT_FOOTER),
             new TourPage(Icons.ROCKET, "You're set",
                     "World Themes has calm ready-made looks under Look preset, Base Intel (B) has a map of every base found, and .help in chat lists commands with Tab completion. Want a sensible starting setup?", SPOT_NONE));
 
@@ -1588,7 +1698,7 @@ public class AnthraxScreen extends Screen {
         if (binding != null) return true;
         if (focusedText == null) {
             // Typing anywhere searches, like a command palette.
-            if (GuiPreferences.separateCategoryWindows() || !event.isAllowedChatCharacter()) return super.charTyped(event);
+            if (!event.isAllowedChatCharacter()) return super.charTyped(event);
             if (!searchFocused && Character.isWhitespace(event.codepoint())) return super.charTyped(event);
             if (!searchFocused) { searchFocused = true; searchEdit.key(GLFW.GLFW_KEY_END, false, false); }
             searchEdit.insert(event.codepointAsString());
@@ -1647,7 +1757,7 @@ public class AnthraxScreen extends Screen {
             editFor(focusedText).key(key, control, shift);
             return true;
         }
-        if (control && key == GLFW.GLFW_KEY_F && !GuiPreferences.separateCategoryWindows()) {
+        if (control && key == GLFW.GLFW_KEY_F) {
             searchFocused = true;
             return true;
         }
@@ -1661,11 +1771,13 @@ public class AnthraxScreen extends Screen {
                     top.toggle();
                     unblonded.anthrax.modules.client.ClientSettingsModule.toggled(top.name, top.isEnabled());
                 }
+                searchFocused = false;
                 return true;
             }
         }
-        if (key == GLFW.GLFW_KEY_ESCAPE && (searchFocused || !search.isEmpty())) {
-            if (!search.isEmpty()) search = "";
+        // Esc in the search box clears it; once unfocused (clicked off or Enter) Esc closes the menu and keeps the search.
+        if (key == GLFW.GLFW_KEY_ESCAPE && searchFocused) {
+            search = "";
             searchFocused = false;
             scrollTarget = 0;
             return true;
@@ -1712,7 +1824,7 @@ public class AnthraxScreen extends Screen {
             List<String> order = GuiPreferences.windowOrder(cats);
             for (int i = order.size() - 1; i >= 0; i--) {
                 String cat = order.get(i);
-                if (GuiPreferences.collapsed("category:" + cat)) continue;
+                if (GuiPreferences.collapsed("category:" + cat) && !searching()) continue;
                 WindowRect rect = detachedRects.get(cat);
                 if (rect != null && rect.contains(px, py)) {
                     detachedScrollTarget.merge(cat, (float) -scrollY * u(48), Float::sum);

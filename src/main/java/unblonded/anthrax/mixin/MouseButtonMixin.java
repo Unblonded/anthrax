@@ -35,5 +35,7 @@ public abstract class MouseButtonMixin {
         }
         if (minecraft.gui.screen() != null || minecraft.player == null) return;
         Keybinds.onKeyPress(Keybinds.MOUSE_BASE + info.button());
+        // a bind opened a screen: don't pass this same click on into it
+        if (minecraft.gui.screen() != null) ci.cancel();
     }
 }

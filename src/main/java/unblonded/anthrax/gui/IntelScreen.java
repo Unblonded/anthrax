@@ -105,9 +105,9 @@ public final class IntelScreen extends Screen {
 
         int ww = Math.min(pw - u(20), u(700)), wh = Math.min(ph - u(20), u(430));
         int wx = (pw - ww) / 2, wy = (ph - wh) / 2 + Math.round((1 - open) * u(20));
-        int r = u(24);
+        int r = u(R_WINDOW);
         shadow(g, wx, wy, ww, wh, r, u(22), (int) (0x70 * open));
-        glass(g, wx, wy, ww, wh, r, alpha(0x0E1119, 0xB8), 1f);
+        canvas(g, wx, wy, ww, wh, r);
 
         // ---- header
         int headH = u(52), cy = wy + headH / 2;
@@ -129,7 +129,7 @@ public final class IntelScreen extends Screen {
                 tab -> { mapTab = tab == 2; structuresTab = tab == 1; selected = 0; listScrollTarget = 0; detailScrollTarget = 0; });
         int close = u(26), closeX = wx + ww - u(16) - close;
         boolean closeHov = inside(mx, my, closeX, cy - close / 2, close, close);
-        glass(g, closeX, cy - close / 2, close, close, close / 2, closeHov ? alpha(Theme.DANGER, 0x90) : 0x14FFFFFF, closeHov ? 1 : .4f);
+        liquidButton(g, closeX, cy - close / 2, close, close, hover(getClass().getSimpleName() + ":close", closeHov), false, Theme.DANGER, mx);
         icon(g, closeX + close / 2, cy, Icons.XMARK, closeHov ? 0xFFFFFFFF : Theme.SUBTEXT);
         hits.add(new Hit(closeX, cy - close / 2, close, close, b -> onClose()));
         fill(g, wx + r, wy + headH, ww - 2 * r, Math.max(1, S / 2), 0x16FFFFFF);
@@ -433,7 +433,7 @@ public final class IntelScreen extends Screen {
     private void pill(GuiGraphicsExtractor g, int x, int y, int w, int h, String label, String glyph, boolean on, int accent, Runnable action) {
         boolean hov = inside(mx, my, x, y, w, h);
         if (on) glassTint(g, x, y, w, h, h / 2, accent, hov ? .9f : .7f);
-        else glass(g, x, y, w, h, h / 2, hov ? 0x28FFFFFF : 0x14FFFFFF, hov ? 1 : .4f);
+        else liquidButton(g, x, y, w, h, hover("intel:" + label, hov), false, 0xFFFFFF, mx);
         icon(g, x + u(14), y + h / 2, glyph, on || hov ? 0xFFFFFFFF : Theme.SUBTEXT);
         text(g, x + u(26), y + h / 2, label, on || hov ? 0xFFFFFFFF : Theme.SUBTEXT, false);
         hits.add(new Hit(x, y, w, h, b -> action.run()));
