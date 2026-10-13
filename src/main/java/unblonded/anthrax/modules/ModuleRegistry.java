@@ -160,6 +160,22 @@ public final class ModuleRegistry {
         addFeature(unblonded.anthrax.modules.hvh.TargetStrafeModule.INSTANCE);
         addFeature(unblonded.anthrax.modules.hvh.TpAuraModule.INSTANCE);
         addFeature(unblonded.anthrax.modules.hvh.TrapEarlyWarningModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.combat.BowAimbotModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.combat.CriticalsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.BetterTooltipsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.BlockHighlightModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.ChamsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.ChatAnimationsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.DamageNumbersModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.MapModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.MotionBlurModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.MusicModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.NoBlockRotationModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.OreEspModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.SmoothHotbarModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.StashFinderModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.TargetEspModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.visual.XrayModule.INSTANCE);
     }
 
     private ModuleRegistry() {}

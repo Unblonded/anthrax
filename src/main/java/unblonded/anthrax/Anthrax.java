@@ -23,7 +23,12 @@ public class Anthrax implements ClientModInitializer {
         ModuleRegistry.categories();
         ModuleConfig.load();
         Hud.register();
-        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> ModuleConfig.saveNow());
+        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+            ModuleConfig.saveNow();
+            unblonded.anthrax.modules.visual.MapModule.INSTANCE.shutdown();
+            unblonded.anthrax.modules.visual.MusicModule.INSTANCE.shutdown();
+        });
+        unblonded.anthrax.modules.visual.BetterTooltipsModule.register();
         zoomKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.anthrax.zoom",
                 GLFW.GLFW_KEY_C,

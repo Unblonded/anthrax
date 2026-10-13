@@ -48,6 +48,15 @@
     "FreecamSkyMixin",
     "FishingHookAccessor",
     "PlayerEdgeMixin",
-    "GameModeAccessor"
+    "GameModeAccessor",
+    "BlockSeedMixin",
+    "XrayMixin",
+    "SmoothHotbarMixin",
+    "ChatAnimationMixin",
+    "CriticalsMixin",
+    "RenderTypeInvoker",
+    "ChamsMixin",
+    "MotionBlurMixin",
+    "ItemStackTooltipMixin"
   ]
 }

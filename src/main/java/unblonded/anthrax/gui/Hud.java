@@ -79,8 +79,8 @@ public final class Hud {
     }
 
     /** Blocks stacked down the top-left and top-right corners, in order; the rest have a fixed spot below. */
-    static final java.util.List<String> LEFT_STACK = java.util.List.of("watermark", "dig", "players", "basefinder", "fps");
-    static final java.util.List<String> RIGHT_STACK = java.util.List.of("modules", "effects");
+    static final java.util.List<String> LEFT_STACK = java.util.List.of("watermark", "dig", "players", "basefinder", "fps", "music");
+    static final java.util.List<String> RIGHT_STACK = java.util.List.of("modules", "effects", "minimap");
 
     /** Default left edge for a block that was never moved (stacked blocks: the stack's column). */
     static int defX(String id, int pw, float gs) {
@@ -154,10 +154,15 @@ public final class Hud {
                 chart.sample(mc.getFps());
                 leftY = element("fps", pw, ph, margin, leftY, gap, (x, y, bw, bh) -> fpsPanel(g, x, y, chart, mc.getFps(), accent, accent2));
             }
+            if (unblonded.anthrax.modules.visual.MusicModule.INSTANCE.showCard())
+                leftY = element("music", pw, ph, margin, leftY, gap, (x, y, bw, bh) -> HudExtras.musicCard(g, x, y, accent));
             if (!menuOpen && !editing) {
                 nametags(g, mc, pw, ph, accent);
                 waypointLabels(g, mc, pw, ph);
                 pinnedCards(g, mc, pw, ph, accent);
+                HudExtras.damageNumbers(g, pw, ph);
+                HudExtras.blockCard(g, mc, pw, ph);
+                HudExtras.crosshairLyric(g, mc, pw, ph);
             }
             if (!menuOpen && unblonded.anthrax.modules.combat.TargetHudModule.INSTANCE.isEnabled())
                 element("target", pw, ph, defX("target", pw, gs), defY("target", ph, gs), 0, (x, y, bw, bh) -> targetHud(g, mc, x, y, dt, accent));
@@ -167,7 +172,9 @@ public final class Hud {
                         (x, y, bw, bh) -> moduleList(g, x, y, bw, pw, dt, accent, accent2));
             else SLIDE.clear();
             if (hud.effects())
-                element("effects", pw, ph, pw - margin - HudLayout.size("effects")[0], rightY, gap, (x, y, bw, bh) -> effects(g, mc, x, y, bw, pw));
+                rightY = element("effects", pw, ph, pw - margin - HudLayout.size("effects")[0], rightY, gap, (x, y, bw, bh) -> effects(g, mc, x, y, bw, pw));
+            if (!menuOpen && unblonded.anthrax.modules.visual.MapModule.INSTANCE.showMinimap())
+                element("minimap", pw, ph, pw - margin - HudLayout.size("minimap")[0], rightY, gap, (x, y, bw, bh) -> HudExtras.minimap(g, mc, x, y, accent));
             if (hud.armorHud())
                 element("armor", pw, ph, defX("armor", pw, gs), defY("armor", ph, gs), 0,
                         (x, y, bw, bh) -> armorHud(g, mc, x, y));

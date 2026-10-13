@@ -31,7 +31,9 @@ public final class HudLayout {
             new Element("coords", "Coordinates", 150, 44),
             new Element("toasts", "Notifications", 220, 86),
             new Element("target", "Target HUD", 150, 58),
-            new Element("scanbox", "Storage Scan box", 190, 28));
+            new Element("scanbox", "Storage Scan box", 190, 28),
+            new Element("music", "Now Playing", 220, 62),
+            new Element("minimap", "Minimap", 120, 120));
 
     private static final String PREFIX = "hud:";
     /** Last drawn bounds in HUD pixels: x, y, w, h, frame. */

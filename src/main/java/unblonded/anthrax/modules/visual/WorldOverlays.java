@@ -24,7 +24,8 @@ public final class WorldOverlays {
             unblonded.anthrax.modules.world.AmethystEspModule.INSTANCE,
             unblonded.anthrax.modules.world.NewChunksModule.INSTANCE,
             ItemEspModule.INSTANCE, SpawnerNotifierModule.INSTANCE, AirPlacePreview.INSTANCE,
-            unblonded.anthrax.modules.hvh.CoverPlannerModule.INSTANCE, unblonded.anthrax.modules.hvh.TrapEarlyWarningModule.INSTANCE
+            unblonded.anthrax.modules.hvh.CoverPlannerModule.INSTANCE, unblonded.anthrax.modules.hvh.TrapEarlyWarningModule.INSTANCE,
+            TargetEspModule.INSTANCE, OreEspModule.INSTANCE, StashFinderModule.INSTANCE, BlockHighlightModule.INSTANCE
     };
 
     /** Outline where Air Place will put the held block. */
