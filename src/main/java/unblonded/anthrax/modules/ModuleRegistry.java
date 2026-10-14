@@ -52,7 +52,7 @@ public final class ModuleRegistry {
     private static Map<String, List<GuiModule>> BY_CATEGORY = Map.of();
 
     /** Sidebar order; categories not listed here follow in registration order. */
-    private static final List<String> CATEGORY_ORDER = List.of("Combat", "HVH", "Movement", "Player", "Mining", "World", "Visuals", "Utility", "Client");
+    private static final List<String> CATEGORY_ORDER = List.of("Combat", "HVH", "Movement", "Player", "Mining", "World", "Visuals", "Cosmetics", "Utility", "Client");
 
     static {
         addFeature(CrystalAuraModule.INSTANCE);
@@ -176,6 +176,39 @@ public final class ModuleRegistry {
         addFeature(unblonded.anthrax.modules.visual.StashFinderModule.INSTANCE);
         addFeature(unblonded.anthrax.modules.visual.TargetEspModule.INSTANCE);
         addFeature(unblonded.anthrax.modules.visual.XrayModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.AirEffectsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.AuroraModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.BlockEffectsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.BreakAnimationModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.CapeModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.ContrailsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.CrystalChamsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.DamageEffectsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.DeathEffectsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.EmotesModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.ExplosionEffectsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.FootstepsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.GlintColorModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.HandTweaksModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.HitMarkersModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.HitParticlesModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.HitSoundsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.ItemPhysicsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.JumpCirclesModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.PetsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.PickupStreaksModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.PlaceAnimationModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.PlacePreviewModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.PlayerAuraModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.ProjectileTrailsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.RealisticWorldModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.SkyboxModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.StormEffectsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.TeleportEffectsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.TrailsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.VitalsModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.WalkStyleModule.INSTANCE);
+        addFeature(unblonded.anthrax.modules.cosmetic.WeaponsModule.INSTANCE);
     }
 
     private ModuleRegistry() {}

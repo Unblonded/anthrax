@@ -318,7 +318,7 @@ public class AnthraxScreen extends Screen {
         int introOffset = Math.round((1f - open) * u(24));
         wy += introOffset;
         int r = u(R_WINDOW);
-        int headerH = u(52), sideW = u(136), footH = u(30);
+        int headerH = u(52), sideW = u(152), footH = u(30);
         int ix = wx, iw = ww;
         int footTop = wy + wh - footH;
         int bodyTop = wy + headerH;
@@ -514,6 +514,7 @@ public class AnthraxScreen extends Screen {
             case "Mining" -> Icons.GEM;
             case "World" -> Icons.MAP_LOCATION_DOT;
             case "Visuals" -> Icons.EYE;
+            case "Cosmetics" -> Icons.PALETTE;
             case "Utility" -> Icons.SCREWDRIVER_WRENCH;
             case SETTINGS_CATEGORY -> Icons.GEAR;
             default -> Icons.LAYER_GROUP;
@@ -561,6 +562,10 @@ public class AnthraxScreen extends Screen {
     //  sidebar
     // =====================================================================
     private final float[] tabVel = new float[1];
+    /** Category list scroll for short windows, and the list's area for wheel hits. */
+    private float sideScroll, sideScrollTarget;
+    private int sideScrollMax, sideShownCategory = -1;
+    private int[] sideList;
     /** Velocities of the selector's lag behind the window while it is dragged: [0] x, [1] y. */
     private final float[] anchorVel = new float[2];
 
@@ -572,19 +577,42 @@ public class AnthraxScreen extends Screen {
         glass(g, px, py, pw, ph, u(18), 0x0CFFFFFF, 0.3f);
         text(g, px + u(14), py + u(16), "Categories", Theme.DIM, true);
 
-        int gap = u(4);
+        int gap = u(3);
         int x = px + u(6), w = pw - u(12);
         int y0 = py + u(30);
         // Settings is pinned above the active-modules gauge, apart from the module categories
         int settingsIdx = cats.indexOf(SETTINGS_CATEGORY);
-        // tabs shrink (down to a readable minimum) so every category and the pinned tab fit the window
         int listed = Math.max(1, cats.size() - (settingsIdx >= 0 ? 1 : 0));
-        int tabH = Math.max(u(22), Math.min(u(32), (py + ph - u(60) - y0 - (listed - 1) * gap) / (listed + 1)));
-        int settingsY = py + ph - u(30) - u(16) - tabH;
+        // tabs shrink (down to a readable minimum) so every category and the pinned tab fit the window; on a
+        // short window the gauge steps aside first, and if the tabs still do not fit, the list scrolls
+        int minTab = u(20), gaugeSpace = u(46);
+        boolean gauge = py + ph - gaugeSpace - y0 >= (listed + 1) * (minTab + gap) + u(12);
+        int bottomPad = gauge ? gaugeSpace : u(8);
+        int tabH = Math.max(minTab, Math.min(u(32), (py + ph - bottomPad - u(12) - y0 - listed * gap) / (listed + 1)));
+        int settingsY = settingsIdx >= 0 ? py + ph - bottomPad - tabH : py + ph - bottomPad;
+        int listBottom = settingsIdx >= 0 ? settingsY - u(12) : settingsY;
+        int listH = listed * (tabH + gap) - gap;
+        int maxSide = Math.max(0, listH - (listBottom - y0));
+        sideScrollMax = maxSide;
+        sideScrollTarget = Math.max(0, Math.min(maxSide, sideScrollTarget));
+        sideScroll = Math.max(0, Math.min(maxSide, sideScroll + (sideScrollTarget - sideScroll) * Math.min(1f, dt * 14f)));
+        sideList = new int[]{x, y0, w, listBottom - y0};
+        // when the category changes (or the menu opens), scroll the list so the selected tab is in view
+        if (category != sideShownCategory) {
+            sideShownCategory = category;
+            if (category != settingsIdx && maxSide > 0) {
+                int selTop = slot(category, settingsIdx) * (tabH + gap), view = listBottom - y0;
+                if (selTop < sideScrollTarget) sideScrollTarget = selTop;
+                else if (selTop + tabH > sideScrollTarget + view) sideScrollTarget = selTop + tabH - view;
+                if (tabY < 0) sideScroll = sideScrollTarget;
+            }
+        }
+        int scrollOff = Math.round(sideScroll);
 
         // the selection is a glass drop that springs between tabs (with a little overshoot)
         boolean searching = searching();
-        float target = (category == settingsIdx ? settingsY : y0 + slot(category, settingsIdx) * (tabH + gap)) - y0;
+        boolean pinnedSel = category == settingsIdx;
+        float target = (pinnedSel ? settingsY : y0 + slot(category, settingsIdx) * (tabH + gap)) - y0;
         if (tabY < 0) tabY = target;
         // tab switch: a short slide with one small overshoot (damping ratio ~0.87)
         tabY = spring(tabY, target, tabVel, 0, dt, 300f, 30f);
@@ -593,34 +621,45 @@ public class AnthraxScreen extends Screen {
         if (Float.isNaN(tabAnchorX)) tabAnchorY = y0;
         tabAnchorX = x;
         tabAnchorY = spring(tabAnchorY, y0, anchorVel, 1, dt, 600f, 44f);
-        int tx0 = x, ty = Math.round(tabAnchorY + tabY);
+        int tx0 = x, ty = Math.round(tabAnchorY + tabY) - (pinnedSel ? 0 : scrollOff);
         float stretch = Math.min(1f, Math.abs(tabVel[0]) / (u(900)));
         int dropH = tabH + Math.round(stretch * u(8));
+        boolean clip = maxSide > 0;
         if (!searching) {
+            if (clip && !pinnedSel) g.enableScissor(x - u(4), y0 - u(2), x + w + u(4), listBottom + u(2));
             if (FANCY) roundFast(g, tx0 - u(2), ty - u(2) - (dropH - tabH) / 2, w + u(4), dropH + u(4), u(14), alpha(accent, 0x1C));
             glassTint(g, tx0, ty - (dropH - tabH) / 2, w, dropH, tabH / 2, accent, 0.55f);
+            if (clip && !pinnedSel) g.disableScissor();
         }
 
         if (settingsIdx >= 0) fill(g, x + u(8), settingsY - u(8), w - u(16), Math.max(1, S / 2), 0x14FFFFFF);
         for (int i = 0; i < cats.size(); i++) {
             boolean pinned = i == settingsIdx;
-            int y = pinned ? settingsY : y0 + slot(i, settingsIdx) * (tabH + gap);
+            int y = pinned ? settingsY : y0 + slot(i, settingsIdx) * (tabH + gap) - scrollOff;
+            // scrolled out of the list area: skip it (and its click) entirely
+            if (!pinned && (y + tabH <= y0 - u(2) || y >= listBottom + u(2))) continue;
+            boolean cut = !pinned && clip && (y < y0 || y + tabH > listBottom);
+            if (cut) g.enableScissor(x - u(4), y0 - u(2), x + w + u(4), listBottom + u(2));
             boolean sel = i == category && !searching;
-            boolean hov = inside(mx, my, x, y, w, tabH);
+            boolean hov = inside(mx, my, x, y, w, tabH) && (pinned || inside(mx, my, x, y0, w, listBottom - y0));
             if (!sel && hov) round(g, x, y, w, tabH, tabH / 2, 0x12FFFFFF);
 
             int tx = x + u(12) + (hov && !sel ? u(2) : 0);
             icon(g, tx + u(6), y + tabH / 2, categoryIcon(cats.get(i)), sel ? 0xFFFFFFFF : hov ? Theme.SUBTEXT : Theme.MUTED);
             tx += u(20);
-            text(g, tx, y + tabH / 2, pinned ? "Settings" : cats.get(i), sel ? 0xFFFFFFFF : Theme.SUBTEXT, sel);
+            // long names are shortened so they never run under the count badge
+            int labelMax = pinned ? x + w - u(8) - tx : x + w - u(8) - u(20) - u(6) - tx;
+            text(g, tx, y + tabH / 2, fitText(pinned ? "Settings" : cats.get(i), labelMax, sel), sel ? 0xFFFFFFFF : Theme.SUBTEXT, sel);
             if (!pinned) {
                 int countW = u(20), countH = u(16);
                 round(g, x + w - u(8) - countW, y + (tabH - countH) / 2, countW, countH, countH / 2, sel ? 0x30FFFFFF : 0x14FFFFFF);
                 textC(g, x + w - u(8) - countW / 2, y + tabH / 2, catCountText[i], sel ? 0xFFFFFFFF : Theme.MUTED, false);
             }
 
+            if (cut) g.disableScissor();
             final int idx = i;
-            hit(x, y, w, tabH, false, b -> {
+            int hy = pinned ? y : Math.max(y, y0), hh = pinned ? tabH : Math.min(y + tabH, listBottom) - hy;
+            if (hh > 0) hit(x, hy, w, hh, false, b -> {
                 if (category != idx) catNs = System.nanoTime();
                 category = idx;
                 GuiPreferences.setLastCategory(cats.get(idx));
@@ -630,6 +669,12 @@ public class AnthraxScreen extends Screen {
                 searchFocused = false;
             }, null);
         }
+
+        if (clip) {
+            if (sideScroll > 0.5f) vgrad(g, x, y0 - u(2), w, u(10), 0x30000000, 0x00000000);
+            if (sideScroll < maxSide - 0.5f) vgrad(g, x, listBottom - u(8), w, u(10), 0x00000000, 0x30000000);
+        }
+        if (!gauge) return;
 
         // status: active modules, as a small glass gauge
         if (ms - activeStamp >= 200L) {
@@ -1396,18 +1441,22 @@ public class AnthraxScreen extends Screen {
     // =====================================================================
     private void drawFooter(GuiGraphicsExtractor g, int ix, int iw, int footTop, int footH) {
         int cy = footTop + footH / 2;
-        int x = ix + u(22);
-        x = hint(g, x, cy, "LMB", "toggle");
-        x = hint(g, x, cy, "RMB", "settings");
-        x = hint(g, x, cy, "MMB", "bind");
-        x = hint(g, x, cy, "Type", "search");
-        int buttonX = ix + iw - u(118), buttonY = cy - u(10);
-        int layoutX = buttonX - u(106);
-        spotFooter = new int[]{layoutX, buttonY, buttonX + u(100) - layoutX, u(20)};
+        int bw = Math.max(u(78), Math.min(u(100), (iw - u(60)) / 4));
+        int buttonX = ix + iw - u(18) - bw, buttonY = cy - u(10);
+        int layoutX = buttonX - u(6) - bw;
+        spotFooter = new int[]{layoutX, buttonY, buttonX + bw - layoutX, u(20)};
+        // key hints fill the space left of the buttons; any that would run under them are left out
+        int x = ix + u(22), limit = layoutX - u(10);
+        String[][] hints = {{"LMB", "toggle"}, {"RMB", "settings"}, {"MMB", "bind"}, {"Type", "search"}};
+        for (String[] h : hints) {
+            int hw = textWidth(h[0], true) + u(10) + u(5) + textWidth(h[1], false);
+            if (x + hw > limit) break;
+            x = hint(g, x, cy, h[0], h[1]);
+        }
         String stats = costText + "   " + clockText;
         if (layoutX - u(12) - textWidth(stats, false) > x) textR(g, layoutX - u(12), cy, stats, Theme.MUTED, false);
-        button(g, layoutX, buttonY, u(100), u(20), "HUD Layout", Theme.accent(), this::openHudEditor);
-        button(g, buttonX, buttonY, u(100), u(20), "Windows", Theme.accent(),
+        button(g, layoutX, buttonY, bw, u(20), "HUD Layout", Theme.accent(), this::openHudEditor);
+        button(g, buttonX, buttonY, bw, u(20), "Windows", Theme.accent(),
                 () -> GuiPreferences.setSeparateCategoryWindows(true));
     }
 
@@ -1421,7 +1470,7 @@ public class AnthraxScreen extends Screen {
     private record TourPage(String glyph, String title, String body, int spot) {}
     private static final int SPOT_NONE = 0, SPOT_CARDS = 1, SPOT_SIDEBAR = 2, SPOT_SEARCH = 3, SPOT_FOOTER = 4;
     private static final List<TourPage> TOUR = List.of(
-            new TourPage(Icons.WAND_MAGIC_SPARKLES, "Welcome to Anthrax",
+            new TourPage(Icons.STAR, "Welcome to Anthrax",
                     "A 30-second tour of the menu. Use the arrow keys or the buttons below, Esc skips. You can replay it any time from the ? button in the header.", SPOT_NONE),
             new TourPage(Icons.HAND_POINTER, "Modules",
                     "Left-click a card to turn it on. Right-click opens its settings, middle-click binds a key. Hover any setting for a moment to see what it does. A dot after a name means you changed its settings.", SPOT_CARDS),
@@ -1824,6 +1873,13 @@ public class AnthraxScreen extends Screen {
                 return true;
             }
         }
+        if (!GuiPreferences.separateCategoryWindows() && sideList != null && sideScrollMax > 0) {
+            int sx = Math.round((float) mouseX * gs), sy = Math.round((float) mouseY * gs);
+            if (inside(sx, sy, sideList[0], sideList[1], sideList[2], sideList[3])) {
+                sideScrollTarget = Math.max(0, Math.min(sideScrollMax, sideScrollTarget - (float) scrollY * u(30)));
+                return true;
+            }
+        }
         if (GuiPreferences.separateCategoryWindows()) {
             int px = Math.round((float) mouseX * gs);
             int py = Math.round((float) mouseY * gs);
@@ -1978,6 +2034,39 @@ public class AnthraxScreen extends Screen {
             case "Target ESP" -> new ItemStack(Items.TARGET);
             case "Xray" -> new ItemStack(Items.GLASS_PANE);
             case "Client Settings" -> new ItemStack(Items.COMPARATOR);
+            case "Air Effects" -> new ItemStack(Items.FEATHER);
+            case "Aurora" -> new ItemStack(Items.PRISMARINE_CRYSTALS);
+            case "Block Effects" -> new ItemStack(Items.AMETHYST_SHARD);
+            case "Break Animation" -> new ItemStack(Items.IRON_PICKAXE);
+            case "Cape" -> new ItemStack(Items.LEATHER_CHESTPLATE);
+            case "Contrails" -> new ItemStack(Items.ELYTRA);
+            case "Crystal Chams" -> new ItemStack(Items.END_CRYSTAL);
+            case "Damage Effects" -> new ItemStack(Items.REDSTONE);
+            case "Death Effects" -> new ItemStack(Items.WITHER_SKELETON_SKULL);
+            case "Emotes" -> new ItemStack(Items.ARMOR_STAND);
+            case "Explosion Effects" -> new ItemStack(Items.TNT);
+            case "Footsteps" -> new ItemStack(Items.LEATHER_BOOTS);
+            case "Glint Color" -> new ItemStack(Items.ENCHANTED_BOOK);
+            case "Hand Tweaks" -> new ItemStack(Items.STICK);
+            case "Hit Markers" -> new ItemStack(Items.BOW);
+            case "Hit Particles" -> new ItemStack(Items.BLAZE_POWDER);
+            case "Hit Sounds" -> new ItemStack(Items.NOTE_BLOCK);
+            case "Item Physics" -> new ItemStack(Items.IRON_INGOT);
+            case "Jump Circles" -> new ItemStack(Items.SLIME_BALL);
+            case "Pets" -> new ItemStack(Items.BONE);
+            case "Pickup Streaks" -> new ItemStack(Items.HOPPER);
+            case "Place Animation" -> new ItemStack(Items.BRICKS);
+            case "Place Preview" -> new ItemStack(Items.GLASS);
+            case "Player Aura" -> new ItemStack(Items.NETHER_STAR);
+            case "Projectile Trails" -> new ItemStack(Items.ARROW);
+            case "Realistic World" -> new ItemStack(Items.SPYGLASS);
+            case "Skybox" -> new ItemStack(Items.DAYLIGHT_DETECTOR);
+            case "Storm Effects" -> new ItemStack(Items.TRIDENT);
+            case "Teleport Effects" -> new ItemStack(Items.ENDER_PEARL);
+            case "Trails" -> new ItemStack(Items.BLAZE_ROD);
+            case "Vitals" -> new ItemStack(Items.GOLDEN_APPLE);
+            case "Walk Style" -> new ItemStack(Items.GOLDEN_BOOTS);
+            case "Weapons" -> new ItemStack(Items.IRON_SWORD);
             default -> ItemStack.EMPTY;
         };
     }

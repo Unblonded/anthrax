@@ -24,6 +24,7 @@ public abstract class WorldGizmoMixin {
                                   CameraRenderState cameraState, Matrix4fc projection, GpuBufferSlice fogBuffer,
                                   Vector4f skyColor, boolean renderEntityOutline, CallbackInfo ci) {
         WorldThemeModule.tintSky(skyColor);
+        unblonded.anthrax.modules.cosmetic.SkyboxModule.INSTANCE.tintSky(skyColor);
         unblonded.anthrax.render.WorldProjection.capture(cameraState);
     }
 

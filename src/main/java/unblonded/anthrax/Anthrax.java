@@ -29,6 +29,7 @@ public class Anthrax implements ClientModInitializer {
             unblonded.anthrax.modules.visual.MusicModule.INSTANCE.shutdown();
         });
         unblonded.anthrax.modules.visual.BetterTooltipsModule.register();
+        unblonded.anthrax.modules.player.AutoReconnectModule.register();
         zoomKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.anthrax.zoom",
                 GLFW.GLFW_KEY_C,

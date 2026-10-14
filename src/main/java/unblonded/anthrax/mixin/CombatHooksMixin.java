@@ -18,5 +18,8 @@ public abstract class CombatHooksMixin {
     private void anthrax$beforeAttack(Player player, Entity target, CallbackInfo ci) {
         AutoWeaponModule.INSTANCE.onAttack(Minecraft.getInstance(), target);
         CombatUtil.markTarget(target);
+        unblonded.anthrax.modules.Safe.run(unblonded.anthrax.modules.cosmetic.HitMarkersModule.INSTANCE, () -> unblonded.anthrax.modules.cosmetic.HitMarkersModule.INSTANCE.onAttack(target));
+        unblonded.anthrax.modules.Safe.run(unblonded.anthrax.modules.cosmetic.HitParticlesModule.INSTANCE, () -> unblonded.anthrax.modules.cosmetic.HitParticlesModule.INSTANCE.onAttack(target));
+        unblonded.anthrax.modules.Safe.run(unblonded.anthrax.modules.cosmetic.HitSoundsModule.INSTANCE, () -> unblonded.anthrax.modules.cosmetic.HitSoundsModule.INSTANCE.onAttack(target));
     }
 }

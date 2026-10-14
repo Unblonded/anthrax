@@ -26,10 +26,12 @@ public final class ChamsModule extends FeatureModule {
     private final Setting.Bool hostiles = setting(Setting.Bool.standalone("Hostile mobs", true), "");
     private final Setting.Bool passive = setting(Setting.Bool.standalone("Animals and others", false), "");
     private final Setting.Mode colour = setting(Setting.Mode.standalone("Colour", "Red", "Red", "Purple", "Cyan", "Green", "White", "Rainbow"), "Chams colour (friends are always blue).");
+    private final Setting.Bool armour = setting(Setting.Bool.standalone("Armour", true), "Draw worn armour (and trims) in the chams colour too, instead of hiding the body behind it.");
+    private final Setting.Bool heldItems = setting(Setting.Bool.standalone("Held items", true), "Draw held items, shields and heads in the chams colour too.");
     private final Setting.Num opacity = setting(Setting.Num.standalone("Opacity", 0.6, 0.1, 1.0, 0.05), "How solid the colour is.");
     private RenderType type;
 
-    private ChamsModule() { super("Chams", "Draws entities in flat colour, visible through walls. Rendered with the model itself, so there is no delay", "Visuals", false); }
+    private ChamsModule() { super("Chams", "Draws entities, their armour and held items in flat colour, visible through walls. Rendered with the model itself, so there is no delay", "Visuals", false); }
 
     /** Whether this entity's body should be drawn as chams. */
     public boolean applies(LivingEntityRenderState state) {
@@ -43,6 +45,9 @@ public final class ChamsModule extends FeatureModule {
         if (cat == MobCategory.MONSTER) return hostiles.get();
         return passive.get();
     }
+
+    public boolean armour() { return armour.get(); }
+    public boolean heldItems() { return heldItems.get(); }
 
     /** ARGB tint for this entity. */
     public int tint(LivingEntityRenderState state) {
@@ -85,7 +90,7 @@ public final class ChamsModule extends FeatureModule {
         for (int i = 0; i < formats.length; i++) b.withVertexBinding(i, formats[i]);
         RenderPipeline pipeline = b.build();
         RenderSetup setup = RenderSetup.builder(pipeline)
-                .withTexture("Sampler0", Identifier.withDefaultNamespace("textures/misc/white.png"))
+                .withTexture("Sampler0", Identifier.fromNamespaceAndPath("anthrax", "textures/misc/white.png"))
                 .useOverlay()
                 .sortOnUpload()
                 .createRenderSetup();

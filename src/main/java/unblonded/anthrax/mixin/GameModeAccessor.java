@@ -11,4 +11,5 @@ public interface GameModeAccessor {
     @Accessor("destroyDelay") void anthrax$setDestroyDelay(int value);
     @Accessor("destroyProgress") float anthrax$getDestroyProgress();
     @Accessor("destroyProgress") void anthrax$setDestroyProgress(float value);
+    @Accessor("destroyBlockPos") net.minecraft.core.BlockPos anthrax$getDestroyBlockPos();
 }

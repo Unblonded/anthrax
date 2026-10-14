@@ -25,7 +25,7 @@ public final class InteractionCancelerModule extends FeatureModule {
     private final Setting.Bool stands = setting(Setting.Bool.standalone("Armor stands", true));
     private final Setting.Bool minecarts = setting(Setting.Bool.standalone("Minecarts", true));
 
-    private final Predicate<Entity> filter = entity -> EntitySelector.CAN_BE_PICKED.test(entity) && !isGhost(entity);
+    private final Predicate<Entity> filter = entity -> EntitySelector.CAN_BE_PICKED.test(entity) && !isGhost(entity) && !unblonded.anthrax.modules.cosmetic.PetsModule.isPet(entity);
 
     private InteractionCancelerModule() {
         super("Interaction Canceler", "Aim and click through villagers, frames, stands and carts", "Utility", false);
@@ -34,8 +34,11 @@ public final class InteractionCancelerModule extends FeatureModule {
     }
 
     /** Picking predicate used by the local player's crosshair raycast. */
+    /** The client-only pet can never be clicked. */
+    private static final Predicate<Entity> NOT_PET = e -> EntitySelector.CAN_BE_PICKED.test(e) && !unblonded.anthrax.modules.cosmetic.PetsModule.isPet(e);
+
     public static Predicate<Entity> pickFilter() {
-        return INSTANCE.isEnabled() ? INSTANCE.filter : EntitySelector.CAN_BE_PICKED;
+        return INSTANCE.isEnabled() ? INSTANCE.filter : NOT_PET;
     }
 
     private boolean isGhost(Entity entity) {

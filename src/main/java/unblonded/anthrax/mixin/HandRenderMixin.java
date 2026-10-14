@@ -18,9 +18,15 @@ import unblonded.anthrax.modules.visual.HandRenderModule;
 
 @Mixin(ItemInHandRenderer.class)
 public abstract class HandRenderMixin {
-    @Inject(method = "renderItem", at = @At("HEAD"))
+    @Inject(method = "renderItem", at = @At("HEAD"), cancellable = true)
     private void anthrax$handPose(LivingEntity entity, ItemStack stack, ItemDisplayContext context,
                                   PoseStack pose, SubmitNodeCollector collector, int light, CallbackInfo ci) {
+        anthrax$applyHandPose(entity, stack, context, pose);
+        // Weapons: the sword is drawn as a knife, after the hand pose so scale and offsets still apply
+        if (unblonded.anthrax.modules.cosmetic.WeaponsModule.INSTANCE.firstPerson(entity, stack, context, pose, collector, light)) ci.cancel();
+    }
+
+    private static void anthrax$applyHandPose(LivingEntity entity, ItemStack stack, ItemDisplayContext context, PoseStack pose) {
         HandRenderModule module = HandRenderModule.INSTANCE;
         Minecraft mc = Minecraft.getInstance();
         if (!module.isEnabled() || entity != mc.player || context != ItemDisplayContext.FIRST_PERSON_RIGHT_HAND

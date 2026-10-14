@@ -1,0 +1,78 @@
+{
+    "targets": {
+        "swap": {}
+    },
+    "passes": [
+        {
+            "vertex_shader": "minecraft:core/screenquad",
+            "fragment_shader": "anthrax:post/realistic",
+            "inputs": [
+                {
+                    "sampler_name": "In",
+                    "target": "minecraft:main",
+                    "bilinear": true
+                }
+            ],
+            "output": "swap",
+            "uniforms": {
+                "GradeConfig": [
+                    {
+                        "name": "Exposure",
+                        "type": "float",
+                        "value": 1.0
+                    },
+                    {
+                        "name": "Contrast",
+                        "type": "float",
+                        "value": 1.3
+                    },
+                    {
+                        "name": "Saturation",
+                        "type": "float",
+                        "value": 0.0
+                    },
+                    {
+                        "name": "Warmth",
+                        "type": "float",
+                        "value": 0.0
+                    },
+                    {
+                        "name": "Vignette",
+                        "type": "float",
+                        "value": 0.55
+                    },
+                    {
+                        "name": "Bloom",
+                        "type": "float",
+                        "value": 0.2
+                    }
+                ]
+            }
+        },
+        {
+            "vertex_shader": "minecraft:core/screenquad",
+            "fragment_shader": "minecraft:post/blit",
+            "inputs": [
+                {
+                    "sampler_name": "In",
+                    "target": "swap"
+                }
+            ],
+            "output": "minecraft:main",
+            "uniforms": {
+                "BlitConfig": [
+                    {
+                        "name": "ColorModulate",
+                        "type": "vec4",
+                        "value": [
+                            1.0,
+                            1.0,
+                            1.0,
+                            1.0
+                        ]
+                    }
+                ]
+            }
+        }
+    ]
+}

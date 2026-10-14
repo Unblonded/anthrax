@@ -163,6 +163,7 @@ public final class Hud {
                 HudExtras.damageNumbers(g, pw, ph);
                 HudExtras.blockCard(g, mc, pw, ph);
                 HudExtras.crosshairLyric(g, mc, pw, ph);
+                CosmeticHud.draw(g, mc, pw, ph);
             }
             if (!menuOpen && unblonded.anthrax.modules.combat.TargetHudModule.INSTANCE.isEnabled())
                 element("target", pw, ph, defX("target", pw, gs), defY("target", ph, gs), 0, (x, y, bw, bh) -> targetHud(g, mc, x, y, dt, accent));

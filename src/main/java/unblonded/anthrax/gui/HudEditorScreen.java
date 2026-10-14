@@ -127,7 +127,7 @@ public final class HudEditorScreen extends Screen {
         int barW = Math.min(pw - u(20), u(560)), barX = (pw - barW) / 2, barY = u(8);
         shadow(g, barX, barY, barW, barH, barH / 2, u(10), 0x50);
         canvas(g, barX, barY, barW, barH, barH / 2);
-        icon(g, barX + u(18), barY + barH / 2, Icons.ARROWS_UP_DOWN_LEFT_RIGHT, accent);
+        icon(g, barX + u(18), barY + barH / 2, Icons.UP_DOWN_LEFT_RIGHT, accent);
         text(g, barX + u(32), barY + barH / 2, "HUD LAYOUT", Theme.TEXT, true);
         text(g, barX + u(32) + textWidth("HUD LAYOUT", true) + u(10), barY + barH / 2,
                 Hud.fit(selected != null ? HudLayout.element(selected).label() + ": arrows / WASD nudge 1px, Shift 10px"

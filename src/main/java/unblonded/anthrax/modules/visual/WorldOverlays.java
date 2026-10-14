@@ -25,7 +25,8 @@ public final class WorldOverlays {
             unblonded.anthrax.modules.world.NewChunksModule.INSTANCE,
             ItemEspModule.INSTANCE, SpawnerNotifierModule.INSTANCE, AirPlacePreview.INSTANCE,
             unblonded.anthrax.modules.hvh.CoverPlannerModule.INSTANCE, unblonded.anthrax.modules.hvh.TrapEarlyWarningModule.INSTANCE,
-            TargetEspModule.INSTANCE, OreEspModule.INSTANCE, StashFinderModule.INSTANCE, BlockHighlightModule.INSTANCE
+            TargetEspModule.INSTANCE, OreEspModule.INSTANCE, StashFinderModule.INSTANCE, BlockHighlightModule.INSTANCE,
+            unblonded.anthrax.modules.cosmetic.AuroraModule.INSTANCE, unblonded.anthrax.modules.cosmetic.BlockEffectsModule.INSTANCE, unblonded.anthrax.modules.cosmetic.BreakAnimationModule.INSTANCE, unblonded.anthrax.modules.cosmetic.ContrailsModule.INSTANCE, unblonded.anthrax.modules.cosmetic.CrystalChamsModule.INSTANCE, unblonded.anthrax.modules.cosmetic.DeathEffectsModule.INSTANCE, unblonded.anthrax.modules.cosmetic.ExplosionEffectsModule.INSTANCE, unblonded.anthrax.modules.cosmetic.FootstepsModule.INSTANCE, unblonded.anthrax.modules.cosmetic.JumpCirclesModule.INSTANCE, unblonded.anthrax.modules.cosmetic.PlaceAnimationModule.INSTANCE, unblonded.anthrax.modules.cosmetic.PlacePreviewModule.INSTANCE, unblonded.anthrax.modules.cosmetic.PlayerAuraModule.INSTANCE, unblonded.anthrax.modules.cosmetic.ProjectileTrailsModule.INSTANCE, unblonded.anthrax.modules.cosmetic.SkyboxModule.INSTANCE, unblonded.anthrax.modules.cosmetic.TeleportEffectsModule.INSTANCE, unblonded.anthrax.modules.cosmetic.TrailsModule.INSTANCE
     };
 
     /** Outline where Air Place will put the held block. */

@@ -19,6 +19,7 @@ public abstract class FogRenderMixin {
     private void anthrax$themeFog(Camera camera, int viewDistance, DeltaTracker deltaTracker, float partialTick,
                                   ClientLevel level, CallbackInfoReturnable<FogData> cir) {
         WorldThemeModule.tintFog(cir.getReturnValue(), camera.getFluidInCamera());
+        if (camera.getFluidInCamera() == FogType.NONE) unblonded.anthrax.modules.cosmetic.SkyboxModule.INSTANCE.tintFog(cir.getReturnValue());
     }
 
     @Inject(method = "getFogType", at = @At("HEAD"), cancellable = true)

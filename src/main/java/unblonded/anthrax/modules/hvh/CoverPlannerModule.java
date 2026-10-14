@@ -29,14 +29,15 @@ public final class CoverPlannerModule extends FeatureModule implements WorldOver
     private final Setting.Num weightCover = setting(Setting.Num.standalone("Weight: cover", 1.0, 0, 2, 0.1), "How much blast-proof walls around a spot matter.");
     private final Setting.Num weightAttack = setting(Setting.Num.standalone("Weight: attack", 0.6, 0, 2, 0.1), "How much being close enough to fight back matters.");
     private final Setting.Num weightEscape = setting(Setting.Num.standalone("Weight: escape", 0.5, 0, 2, 0.1), "How much open routes out of a spot matter.");
-    private final Setting.Num weightMine = setting(Setting.Num.standalone("Weight: mining time", 0.4, 0, 2, 0.1), "How much the time to dig you out matters.");
+    private final Setting.Num weightMine = setting(Setting.Num.standalone("Weight: mining time", 0.4, 0, 2, 0.1), "How much the time to dig you out matters, worked out from each enemy's actual tool, enchantments and haste.");
     private final Setting.Num weightDistance = setting(Setting.Num.standalone("Weight: walk distance", 0.3, 0, 2, 0.1), "Penalty for spots that are far to walk to.");
     private final Setting.Num shown = setting(Setting.Num.standalone("Spots shown", 3, 1, 8, 1), "How many of the best spots to outline.");
     private final List<Spot> best = new ArrayList<>();
     private List<BlockPos> route = List.of();
     private int tick;
 
-    private record Spot(BlockPos pos, double score, int cover, int exits) {}
+    /** {@code mineTicks}: how long the fastest enemy needs to break the weakest wall around the spot. */
+    private record Spot(BlockPos pos, double score, int cover, int exits, int mineTicks) {}
 
     private CoverPlannerModule() { super("Cover Planner", "Ranks nearby positions by explosion cover, attack opportunities, escape routes and mining time, and draws the route to the best one", "HVH", false); }
 
@@ -51,13 +52,17 @@ public final class CoverPlannerModule extends FeatureModule implements WorldOver
         for (var entry : dist.entrySet()) {
             BlockPos p = entry.getKey();
             int cover = 0, exits = 0;
-            double mine = 0;
+            int weakest = Integer.MAX_VALUE;
             for (Direction d : Hvh.SIDES) {
-                var s = mc.level.getBlockState(p.relative(d));
+                BlockPos side = p.relative(d);
+                var s = mc.level.getBlockState(side);
                 if (Hvh.blastProof(s)) cover++;
-                if (walkable(mc, p.relative(d))) exits++;
-                mine += Math.min(50, Math.max(0, s.getDestroySpeed(mc.level, p.relative(d))));
+                if (walkable(mc, side)) exits++;
+                // an open side needs no mining at all; a wall takes as long as the quickest enemy needs with their own tool
+                int t = s.getCollisionShape(mc.level, side).isEmpty() ? 0 : mineTicks(mc, foes, self, s, side);
+                weakest = Math.min(weakest, t);
             }
+            double mine = Math.min(weakest, 400) / 400.0;
             if (Hvh.blastProof(mc.level.getBlockState(p.below()))) cover++;
             double attack = 0;
             for (Player f : foes) {
@@ -65,8 +70,8 @@ public final class CoverPlannerModule extends FeatureModule implements WorldOver
                 attack = Math.max(attack, d <= 3.5 ? 1 : d <= 6 ? 0.5 : 0);
             }
             double score = weightCover.get() * cover / 5.0 + weightAttack.get() * attack + weightEscape.get() * Math.min(exits, 2) / 2.0
-                    + weightMine.get() * mine / 200.0 - weightDistance.get() * entry.getValue() / Math.max(1.0, radius.get());
-            all.add(new Spot(p, score, cover, exits));
+                    + weightMine.get() * mine - weightDistance.get() * entry.getValue() / Math.max(1.0, radius.get());
+            all.add(new Spot(p, score, cover, exits, weakest));
         }
         all.sort((a, b) -> Double.compare(b.score, a.score));
         for (int i = 0; i < Math.min(shown.get(), all.size()); i++) best.add(all.get(i));
@@ -74,6 +79,24 @@ public final class CoverPlannerModule extends FeatureModule implements WorldOver
         List<BlockPos> path = new ArrayList<>();
         if (!best.isEmpty()) for (BlockPos p = best.getFirst().pos; p != null; p = parent.get(p)) path.addFirst(p);
         route = path;
+    }
+
+    /**
+     * Ticks to break a block, using each enemy's real mining speed: their held tool, its enchantments, haste and
+     * whether they are on the ground (Player.getDestroySpeed). The quickest enemy counts; with none around, your own.
+     */
+    private static int mineTicks(Minecraft mc, List<Player> foes, Player self, net.minecraft.world.level.block.state.BlockState state, BlockPos pos) {
+        float hardness = state.getDestroySpeed(mc.level, pos);
+        if (hardness < 0) return 100_000;            // unbreakable
+        if (hardness == 0) return 1;
+        int best = Integer.MAX_VALUE;
+        for (Player who : foes.isEmpty() ? List.of(self) : foes) {
+            float speed = who.getDestroySpeed(state);
+            float perTick = speed / hardness / (who.hasCorrectToolForDrops(state) ? 30f : 100f);
+            int ticks = perTick >= 1 ? 1 : (int) Math.ceil(1 / Math.max(1e-6f, perTick));
+            best = Math.min(best, ticks);
+        }
+        return best;
     }
 
     /** Standing spots reachable on foot (step up or down one block), with walking distance. */
@@ -110,6 +133,10 @@ public final class CoverPlannerModule extends FeatureModule implements WorldOver
             int color = i == 0 ? 0x55FF88 : i == 1 ? 0xFFD24A : 0xFF8855;
             var box = new net.minecraft.world.phys.AABB(best.get(i).pos).setMaxY(best.get(i).pos.getY() + 0.1);
             net.minecraft.gizmos.Gizmos.cuboid(box, net.minecraft.gizmos.GizmoStyle.strokeAndFill(WorldOverlays.argb(0xE0, color), 2f, WorldOverlays.argb(0x40, color))).setAlwaysOnTop();
+            int mt = best.get(i).mineTicks;
+            String label = mt >= 100_000 ? "undiggable" : mt == 0 ? "open" : String.format("%.1fs dig", mt / 20.0);
+            net.minecraft.gizmos.Gizmos.billboardText(label, Vec3.atBottomCenterOf(best.get(i).pos).add(0, 0.6, 0),
+                    net.minecraft.gizmos.TextGizmo.Style.forColorAndCentered(WorldOverlays.argb(0xFF, color)).withScale(0.35f)).setAlwaysOnTop();
         }
         for (int i = 1; i < route.size(); i++)
             net.minecraft.gizmos.Gizmos.line(Vec3.atBottomCenterOf(route.get(i - 1)).add(0, 0.1, 0), Vec3.atBottomCenterOf(route.get(i)).add(0, 0.1, 0),
@@ -119,6 +146,7 @@ public final class CoverPlannerModule extends FeatureModule implements WorldOver
     @Override public String hudInfo() {
         if (best.isEmpty()) return null;
         Spot s = best.getFirst();
-        return s.cover + "/5 cover";
+        String dig = s.mineTicks >= 100_000 ? "undiggable" : s.mineTicks == 0 ? "open side" : String.format("%.1fs to dig", s.mineTicks / 20.0);
+        return s.cover + "/5 cover, " + dig;
     }
 }

@@ -59,7 +59,7 @@ public final class ScanBox {
             glass(g, bx, by, bw, bh, r, alpha(0x0E1119, focused ? 0xE0 : 0xC8), focused ? 1f : hov ? 0.8f : 0.5f);
             if (focused) outline(g, bx, by, bw, bh, r, Math.max(1, S / 2), alpha(accent, 0xE0), alpha(accent, 0x80));
             if (handleHov) {
-                icon(g, bx + u(15), cy, Icons.ARROWS_UP_DOWN_LEFT_RIGHT, accent);
+                icon(g, bx + u(15), cy, Icons.UP_DOWN_LEFT_RIGHT, accent);
                 String hint = moving ? "Release to place" : "Drag to move";
                 int hw = textWidth(hint, false) + u(14), hh = u(18), hx = bx, hy = by - hh - u(5);
                 if (hy < 0) hy = by + bh + u(5);

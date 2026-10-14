@@ -41,6 +41,7 @@ public final class CombatUtil {
 
     // ------------------------------------------------------------------ targeting
     public static boolean attackable(LocalPlayer self, Entity e, boolean players, boolean hostiles, boolean animals, boolean invisible) {
+        if (unblonded.anthrax.modules.cosmetic.PetsModule.isPet(e)) return false;
         if (e == self || e.isRemoved() || !(e instanceof LivingEntity living) || !living.isAlive() || living.getHealth() <= 0) return false;
         if (!invisible && e.isInvisible()) return false;
         if (e instanceof Player p) return players && !p.isSpectator() && !p.isCreative() && !FriendsModule.protects(p);

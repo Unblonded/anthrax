@@ -57,6 +57,22 @@
     "RenderTypeInvoker",
     "ChamsMixin",
     "MotionBlurMixin",
-    "ItemStackTooltipMixin"
+    "ItemStackTooltipMixin",
+    "CosmeticGameModeMixin",
+    "CosmeticPacketMixin",
+    "PlayerAnimMixin",
+    "CapeMixin",
+    "ItemPhysicsMixin",
+    "ItemEntityRenderStateMixin",
+    "CrystalChamsMixin",
+    "HandTweaksMixin",
+    "SwingSpeedMixin",
+    "SkyboxMixin",
+    "StormMixin",
+    "PostGradeMixin",
+    "MinecraftUseInvoker",
+    "RenderTypeNameAccessor",
+    "ChamsCollectorMixin",
+    "WeaponLayerMixin"
   ]
 }

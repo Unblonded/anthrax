@@ -35,6 +35,20 @@ public abstract class XrayMixin {
         if (XrayModule.hides(anthrax$self())) cir.setReturnValue(false);
     }
 
+    /**
+     * Ambient occlusion darkens a corner for every solid block around it. Hidden blocks still counted, so ores
+     * deep in rock came out dim; they now cast no shade (vanilla and Sodium both read these two).
+     */
+    @Inject(method = "getShadeBrightness", at = @At("HEAD"), cancellable = true)
+    private void anthrax$noShade(net.minecraft.world.level.BlockGetter level, net.minecraft.core.BlockPos pos, CallbackInfoReturnable<Float> cir) {
+        if (XrayModule.hides(anthrax$self())) cir.setReturnValue(1f);
+    }
+
+    @Inject(method = "isViewBlocking", at = @At("HEAD"), cancellable = true)
+    private void anthrax$notViewBlocking(net.minecraft.world.level.BlockGetter level, net.minecraft.core.BlockPos pos, CallbackInfoReturnable<Boolean> cir) {
+        if (XrayModule.hides(anthrax$self())) cir.setReturnValue(false);
+    }
+
     @Inject(method = "getFaceOcclusionShape", at = @At("HEAD"), cancellable = true)
     private void anthrax$noFaceOcclusion(Direction dir, CallbackInfoReturnable<VoxelShape> cir) {
         if (XrayModule.hides(anthrax$self())) cir.setReturnValue(Shapes.empty());

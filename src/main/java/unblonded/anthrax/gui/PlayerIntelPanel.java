@@ -230,7 +230,7 @@ public final class PlayerIntelPanel {
 
         // TELEMETRY
         if (m.showTelemetry()) {
-            cy = section(g, ix, cy, iw, "TELEMETRY", Icons.LOCATION_CROSSHAIRS, accent);
+            cy = section(g, ix, cy, iw, "TELEMETRY", Icons.CROSSHAIRS, accent);
             cell(g, ix, cy, col * 2, "POSITION", e.x() + "  " + e.y() + "  " + e.z(), CYAN);
             cell(g, ix + col * 2, cy, col, "DELTA Y", (e.dy() >= 0 ? "+" : "") + String.format("%.1f", e.dy()), Theme.TEXT);
             cy += u(CELL);
