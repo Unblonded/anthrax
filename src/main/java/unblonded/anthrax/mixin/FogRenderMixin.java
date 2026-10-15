@@ -19,11 +19,14 @@ public abstract class FogRenderMixin {
     private void anthrax$themeFog(Camera camera, int viewDistance, DeltaTracker deltaTracker, float partialTick,
                                   ClientLevel level, CallbackInfoReturnable<FogData> cir) {
         WorldThemeModule.tintFog(cir.getReturnValue(), camera.getFluidInCamera());
+        // No Render: push the fog out of view instead of faking the fog type (the game needs a real type
+        // to pick a fog colour, and crashes without one)
+        FogData fog = cir.getReturnValue();
+        if (NoRenderModule.isHidden(3) && fog != null) {
+            fog.environmentalStart = fog.renderDistanceStart = 1.0e6f;
+            fog.environmentalEnd = fog.renderDistanceEnd = 2.0e6f;
+        }
         if (camera.getFluidInCamera() == FogType.NONE) unblonded.anthrax.modules.cosmetic.SkyboxModule.INSTANCE.tintFog(cir.getReturnValue());
     }
 
-    @Inject(method = "getFogType", at = @At("HEAD"), cancellable = true)
-    private void anthrax$noFog(Camera camera, CallbackInfoReturnable<FogType> cir) {
-        if (NoRenderModule.isHidden(3)) cir.setReturnValue(FogType.NONE);
-    }
 }
